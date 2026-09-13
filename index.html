@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<title>Rain on Glass — Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+  html, body { margin: 0; height: 100%; background: #05070a; overflow: hidden; }
+  #app { width: 100vw; height: 100vh; }
+  #ui {
+    position: absolute; left: 16px; bottom: 16px;
+    background: rgba(18,23,31,0.72); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(14px); border-radius: 12px; padding: 12px 14px;
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #e7edf5;
+  }
+  #ui button {
+    background: #8ec7ff; color: #071018; border: none; border-radius: 8px;
+    font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer;
+  }
+  #ui p { margin: 0 0 8px; color: #93a1b4; }
+  #file-input { display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="ui">
+  <p>Shader mưa trên kính (code của bạn, đã fix lỗi GLSL ES1/ES3)</p>
+  <button id="pick-btn">Tải ảnh của bạn</button>
+</div>
+<input type="file" id="file-input" accept="image/*">
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="x-shader/x-vertex" id="rain-vert">
+out vec2 uvInterpolator;
+
+void main() {
+  uvInterpolator = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+</script>
+
+<script type="x-shader/x-fragment" id="rain-frag">
+in vec2 uvInterpolator;
+uniform float u_time;
+uniform sampler2D u_texture;
+out vec4 outColor;
+
+// Generate a random float from a single input and seed.
+float Random11(float inputValue, float seed) {
+  return fract(sin(inputValue * 345.456) * seed);
+}
+
+// Generate a random float from a 2d input and seed.
+float Random21(vec2 inputValue, float seed) {
+  return fract(sin(dot(inputValue, vec2(123.456, 43.12))) * seed);
+}
+
+// Generate drops as distortions, that can be applied to UV coordinates
+vec2 Drops(vec2 uv, float seed) {
+  // Randomly move everything
+  float shiftY = Random11(0.5, seed);
+  uv.y += shiftY;
+
+  // Split UV space into cells. Each cell will contain a drop.
+  float cellsResolution = 10.0;
+  uv *= cellsResolution;
+
+  // Move each row randomly.
+  float rowIndex = floor(uv.y);
+  float shiftX = Random11(rowIndex, seed);
+  uv.x += shiftX;
+
+  vec2 cellIndex = floor(uv);
+  vec2 cellUv = fract(uv);
+
+  vec2 cellCenter = vec2(0.5);
+  float distanceFromCenter = distance(cellUv, cellCenter);
+
+  // We don't want to show every drop. So randomly remove some of them.
+  float isDropShown = step(0.8, Random21(cellIndex, seed + 14244.324));
+
+  // Decrease each drop intensity with time. Then make it appear again.
+  float dropIntensity = 1.0 - fract(u_time * 0.1 + Random21(cellIndex, seed + 32132.432) * 2.0) * 2.0;
+  dropIntensity = sign(dropIntensity) * abs(dropIntensity * dropIntensity * dropIntensity * dropIntensity);
+  dropIntensity = clamp(dropIntensity, 0.0, 1.0);
+
+  // We only need results from inside a specific radius of a drop.
+  float isInsideDrop = 1.0 - step(0.1, distanceFromCenter);
+
+  vec2 vecToCenter = normalize(cellCenter - cellUv);
+
+  // Drop value is a vector to the center that increases with distance from it.
+  vec2 dropValue = vecToCenter * distanceFromCenter * distanceFromCenter * 40.0;
+
+  vec2 drop = dropValue * isInsideDrop * isDropShown * dropIntensity;
+  return drop;
+}
+
+void main() {
+  vec2 uv = uvInterpolator;
+
+  // Run the Drop function 10 times to create a seemingly random pattern.
+  vec2 drops = vec2(0.0);
+  for(int i = 0; i < 10; i++) {
+    drops += Drops(uv, 42424.43 + float(i) * 12313.432);
+  }
+
+  // Distort UV.
+  uv += drops;
+
+  // Sample the texture after distorting the UV space.
+  vec4 color = texture(u_texture, uv);
+
+  outColor = color;
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const rainVertShader = document.getElementById('rain-vert').textContent;
+const rainFragShader = document.getElementById('rain-frag').textContent;
+
+async function main() {
+  const app = document.querySelector('#app');
+
+  const scene = new THREE.Scene();
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.z = 7;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  app.appendChild(renderer.domElement);
+
+  const textureLoader = new THREE.TextureLoader();
+
+  // Placeholder image (soft night-lights gradient) so the demo works without
+  // any external asset. Swap this for your own background.jpg in your project.
+  const defaultTexture = makeDefaultTexture();
+
+  let plane = null;
+
+  function buildPlane(texture) {
+    if (plane) {
+      scene.remove(plane);
+      plane.geometry.dispose();
+      plane.material.dispose();
+    }
+
+    const aspectRatio = texture.image.height / texture.image.width;
+    const planeHeight = 10;
+    const planeWidth = planeHeight / aspectRatio;
+
+    const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 1, 1);
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader: rainVertShader,
+      fragmentShader: rainFragShader,
+      glslVersion: THREE.GLSL3, // required since the shaders use `in`/`out` and texture()
+      uniforms: {
+        u_time: { value: 0 },
+        u_texture: { value: texture },
+      },
+    });
+
+    plane = new THREE.Mesh(geometry, material);
+    scene.add(plane);
+
+    fitCameraToPlane(planeWidth, planeHeight);
+  }
+
+  function fitCameraToPlane(width, height) {
+    const aspect = window.innerWidth / window.innerHeight;
+    const targetAspect = width / height;
+    // Pull the camera back just enough that the plane fills the shorter axis.
+    const vFov = (camera.fov * Math.PI) / 180;
+    const distForHeight = (height / 2) / Math.tan(vFov / 2);
+    const distForWidth = distForHeight / (aspect / targetAspect);
+    camera.position.z = Math.max(distForHeight, distForWidth) * 1.02;
+  }
+
+  buildPlane(defaultTexture);
+
+  function animationFrame(time) {
+    if (plane) plane.material.uniforms.u_time.value = time / 1000;
+    renderer.render(scene, camera);
+    requestAnimationFrame(animationFrame);
+  }
+  requestAnimationFrame(animationFrame);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // File picker to try your own image.
+  const fileInput = document.getElementById('file-input');
+  document.getElementById('pick-btn').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    textureLoader.load(url, (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      buildPlane(texture);
+    });
+  });
+
+  function makeDefaultTexture() {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 683;
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, '#0e1626');
+    g.addColorStop(0.55, '#131c2c');
+    g.addColorStop(1, '#05070c');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, c.width, c.height);
+
+    const rand = (a, b) => a + Math.random() * (b - a);
+    for (let i = 0; i < 60; i++) {
+      const x = rand(0, c.width);
+      const y = rand(c.height * 0.35, c.height);
+      const r = rand(3, 22);
+      const hue = Math.random() < 0.5 ? '255,205,120' : '150,200,255';
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(${hue},0.9)`);
+      grad.addColorStop(1, `rgba(${hue},0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(0, c.height * 0.75, c.width, c.height * 0.25);
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+}
+
+main();
+</script>
+</body>
+</html>
