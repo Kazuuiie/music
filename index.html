@@ -52,71 +52,96 @@ uniform float u_time;
 uniform sampler2D u_texture;
 out vec4 outColor;
 
-// Generate a random float from a single input and seed.
-float Random11(float inputValue, float seed) {
-  return fract(sin(inputValue * 345.456) * seed);
+float hash1(vec2 p) {
+  return fract(sin(dot(p, vec2(123.456, 43.12))) * 45678.912);
+}
+vec2 hash2(vec2 p) {
+  vec2 q = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(q) * 43758.5453);
 }
 
-// Generate a random float from a 2d input and seed.
-float Random21(vec2 inputValue, float seed) {
-  return fract(sin(dot(inputValue, vec2(123.456, 43.12))) * seed);
+// Simulates one circular drop as a hemispherical lens: bends light more near
+// the rim than at the center, and adds a specular glint where the curved
+// surface catches the light. Returns vec3(refraction.xy, specular).
+vec3 dropLens(vec2 localPos, float radius) {
+  float d = length(localPos);
+  if (d >= radius) return vec3(0.0);
+
+  vec2 n2 = localPos / radius;                    // 0 at center, 1 at rim
+  float z = sqrt(max(0.0, 1.0 - dot(n2, n2)));     // hemisphere height: 1 center, 0 rim
+  vec3 normal = normalize(vec3(n2, z));
+
+  vec2 refraction = n2 * (1.0 - z);                // curved lens bend, soft at center
+
+  vec3 lightDir = normalize(vec3(-0.35, 0.5, 0.7));
+  float spec = pow(max(dot(normal, lightDir), 0.0), 40.0);
+
+  float edgeFade = smoothstep(radius, radius * 0.85, d); // soft outer edge, no hard circle
+  return vec3(refraction * edgeFade, spec * edgeFade);
 }
 
-// Generate drops as distortions, that can be applied to UV coordinates
-vec2 Drops(vec2 uv, float seed) {
-  // Randomly move everything
-  float shiftY = Random11(0.5, seed);
-  uv.y += shiftY;
+// Tiny droplets that stay put on the glass, gently shimmering — most real
+// condensation never moves, it just clings there.
+vec3 staticDroplets(vec2 uv, float density, float seed) {
+  vec2 guv = uv * density;
+  vec2 cell = floor(guv);
+  vec2 f = fract(guv) - 0.5;
 
-  // Split UV space into cells. Each cell will contain a drop.
-  float cellsResolution = 10.0;
-  uv *= cellsResolution;
+  vec2 rnd = hash2(cell + seed);
+  if (rnd.x > 0.45) return vec3(0.0); // keep it sparse
 
-  // Move each row randomly.
-  float rowIndex = floor(uv.y);
-  float shiftX = Random11(rowIndex, seed);
-  uv.x += shiftX;
+  vec2 center = (rnd - 0.5) * 0.6;
+  float radius = 0.14 + rnd.y * 0.12;
+  vec3 lens = dropLens(f - center, radius);
 
-  vec2 cellIndex = floor(uv);
-  vec2 cellUv = fract(uv);
+  float shimmer = 0.9 + 0.1 * sin(u_time * 0.8 + rnd.x * 30.0);
+  return lens * shimmer;
+}
 
-  vec2 cellCenter = vec2(0.5);
-  float distanceFromCenter = distance(cellUv, cellCenter);
+// Bigger drops that slide down under gravity and leave a wet streak behind
+// them — this is what actually reads as "rain running down glass".
+vec3 fallingDrops(vec2 uv, float columns, float seed) {
+  vec2 guv = uv * vec2(columns, columns * 0.55);
+  vec2 cell = floor(guv);
+  vec2 f = fract(guv) - 0.5;
 
-  // We don't want to show every drop. So randomly remove some of them.
-  float isDropShown = step(0.8, Random21(cellIndex, seed + 14244.324));
+  vec2 rnd = hash2(cell + seed);
+  float speed = 0.12 + rnd.x * 0.30;
+  float phase = fract(u_time * speed + rnd.y * 8.0);
 
-  // Decrease each drop intensity with time. Then make it appear again.
-  float dropIntensity = 1.0 - fract(u_time * 0.1 + Random21(cellIndex, seed + 32132.432) * 2.0) * 2.0;
-  dropIntensity = sign(dropIntensity) * abs(dropIntensity * dropIntensity * dropIntensity * dropIntensity);
-  dropIntensity = clamp(dropIntensity, 0.0, 1.0);
+  float headY = mix(0.65, -0.65, phase);   // travels top to bottom of its cell
+  float posX = (rnd.y - 0.5) * 0.5;
+  float radius = 0.09 + rnd.x * 0.06;
 
-  // We only need results from inside a specific radius of a drop.
-  float isInsideDrop = 1.0 - step(0.1, distanceFromCenter);
+  vec3 lens = dropLens(f - vec2(posX, headY), radius);
 
-  vec2 vecToCenter = normalize(cellCenter - cellUv);
+  // Trail: thin, fading streak between the drop's starting point and its
+  // current position, narrowing slightly as it stretches.
+  float trailTop = 0.65;
+  float alongTrail = clamp((trailTop - f.y) / max(trailTop - headY, 0.001), 0.0, 1.0);
+  float trailWidth = radius * 0.30 * (1.0 - alongTrail * 0.5);
+  float inTrail = step(headY, f.y) * step(f.y, trailTop)
+                * smoothstep(trailWidth, trailWidth * 0.3, abs(f.x - posX));
+  vec2 trailRefr = vec2(sign(f.x - posX) * 0.012, 0.0) * inTrail * (1.0 - alongTrail) * 0.6;
 
-  // Drop value is a vector to the center that increases with distance from it.
-  vec2 dropValue = vecToCenter * distanceFromCenter * distanceFromCenter * 40.0;
-
-  vec2 drop = dropValue * isInsideDrop * isDropShown * dropIntensity;
-  return drop;
+  float fadeInOut = smoothstep(0.0, 0.12, phase) * smoothstep(1.0, 0.9, phase);
+  return vec3((lens.xy + trailRefr) * fadeInOut, lens.z * fadeInOut);
 }
 
 void main() {
   vec2 uv = uvInterpolator;
 
-  // Run the Drop function 10 times to create a seemingly random pattern.
-  vec2 drops = vec2(0.0);
-  for(int i = 0; i < 10; i++) {
-    drops += Drops(uv, 42424.43 + float(i) * 12313.432);
-  }
+  vec3 result = vec3(0.0);
+  result += fallingDrops(uv, 9.0, 42.0);
+  result += fallingDrops(uv * 1.3 + 4.2, 7.0, 137.0) * 0.85;
+  result += staticDroplets(uv, 14.0, 11.0);
+  result += staticDroplets(uv * 1.6 + 9.0, 20.0, 71.0) * 0.7;
 
-  // Distort UV.
-  uv += drops;
+  vec2 refraction = result.xy * 0.35;
+  vec4 color = texture(u_texture, uv + refraction);
 
-  // Sample the texture after distorting the UV space.
-  vec4 color = texture(u_texture, uv);
+  // Subtle brightening where a drop's curved surface catches the light.
+  color.rgb += result.z * 0.5;
 
   outColor = color;
 }
@@ -217,9 +242,13 @@ async function main() {
   });
 
   function makeDefaultTexture() {
+    // High-contrast scene (sharp lines, dots, bright text) so UV refraction
+    // from the drops is obvious the moment the page loads — a flat gradient
+    // barely shows any distortion since there's nothing sharp to bend.
     const c = document.createElement('canvas');
     c.width = 1024; c.height = 683;
     const ctx = c.getContext('2d');
+
     const g = ctx.createLinearGradient(0, 0, 0, c.height);
     g.addColorStop(0, '#0e1626');
     g.addColorStop(0.55, '#131c2c');
@@ -227,22 +256,47 @@ async function main() {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, c.width, c.height);
 
+    // Sharp grid lines — the classic way to make refraction visible.
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    const step = 48;
+    for (let x = 0; x <= c.width; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, c.height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= c.height; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(c.width, y);
+      ctx.stroke();
+    }
+
+    // Bright city-light dots with hard edges.
     const rand = (a, b) => a + Math.random() * (b - a);
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 90; i++) {
       const x = rand(0, c.width);
-      const y = rand(c.height * 0.35, c.height);
-      const r = rand(3, 22);
-      const hue = Math.random() < 0.5 ? '255,205,120' : '150,200,255';
-      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(${hue},0.9)`);
-      grad.addColorStop(1, `rgba(${hue},0)`);
-      ctx.fillStyle = grad;
+      const y = rand(0, c.height);
+      const r = rand(4, 16);
+      const hue = Math.random() < 0.5 ? '255,205,120' : '150,210,255';
+      ctx.fillStyle = `rgba(${hue},0.95)`;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = `rgba(${hue},0.5)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.8, 0, Math.PI * 2);
+      ctx.stroke();
     }
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(0, c.height * 0.75, c.width, c.height * 0.25);
+
+    // Bold text — letters are great at revealing lens-like distortion.
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = 'bold 120px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('RAIN', c.width / 2, c.height / 2);
 
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
