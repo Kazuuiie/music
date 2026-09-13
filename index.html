@@ -2,247 +2,120 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8" />
-<title>Rain on Glass — Demo</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hiệu ứng giọt nước - Ví dụ Three.js</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #05070a; overflow: hidden; }
-  #app { width: 100vw; height: 100vh; }
-  #ui {
-    position: absolute; left: 16px; bottom: 16px;
-    background: rgba(18,23,31,0.72); border: 1px solid rgba(255,255,255,0.08);
-    backdrop-filter: blur(14px); border-radius: 12px; padding: 12px 14px;
-    font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #e7edf5;
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+    height: 100%;
+    width: 100%;
   }
-  #ui button {
-    background: #8ec7ff; color: #071018; border: none; border-radius: 8px;
-    font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer;
+  #app {
+    width: 100vw;
+    height: 100vh;
   }
-  #ui p { margin: 0 0 8px; color: #93a1b4; }
-  #file-input { display: none; }
+  #app canvas {
+    display: block;
+  }
+  #hint {
+    position: fixed;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.6);
+    font-family: sans-serif;
+    font-size: 13px;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="ui">
-  <p>Shader mưa trên kính (code của bạn, đã fix lỗi GLSL ES1/ES3)</p>
-  <button id="pick-btn">Tải ảnh của bạn</button>
-</div>
-<input type="file" id="file-input" accept="image/*">
+<div id="hint">Hiệu ứng giọt nước làm méo texture theo thời gian</div>
 
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
   }
-}
-</script>
-
-<script type="x-shader/x-vertex" id="rain-vert">
-out vec2 uvInterpolator;
-
-void main() {
-  uvInterpolator = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-</script>
-
-<script type="x-shader/x-fragment" id="rain-frag">
-in vec2 uvInterpolator;
-uniform float u_time;
-uniform sampler2D u_texture;
-out vec4 outColor;
-
-float hash1(vec2 p) {
-  return fract(sin(dot(p, vec2(123.456, 43.12))) * 45678.912);
-}
-vec2 hash2(vec2 p) {
-  vec2 q = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-  return fract(sin(q) * 43758.5453);
-}
-
-// One circular drop as a hemispherical lens. Edges are anti-aliased with
-// fwidth() so they stay smooth regardless of screen resolution or zoom.
-// Returns vec4(refraction.xy, specular, coverage).
-vec4 dropLens(vec2 localPos, float radius) {
-  float d = length(localPos);
-  float aa = fwidth(d) + 0.0004;
-  if (d >= radius + aa) return vec4(0.0);
-
-  vec2 n2 = localPos / radius;
-  float z = sqrt(max(0.0, 1.0 - dot(n2, n2)));
-  vec3 normal = normalize(vec3(n2, z));
-
-  vec2 refraction = n2 * (1.0 - z);
-
-  vec3 lightDir = normalize(vec3(-0.35, 0.5, 0.7));
-  float spec = pow(max(dot(normal, lightDir), 0.0), 40.0);
-
-  float edgeFade = smoothstep(radius + aa, radius - aa, d);
-  return vec4(refraction * edgeFade, spec * edgeFade, edgeFade);
-}
-
-// Same lens, stretched vertically by `elong` to get a raindrop-like shape
-// instead of a perfect circle (elong = 1.0 stays circular).
-vec4 dropLensElong(vec2 localPos, float radius, float elong) {
-  vec2 squashed = vec2(localPos.x, localPos.y / elong);
-  vec4 lens = dropLens(squashed, radius);
-  lens.xy *= vec2(1.0, elong);
-  return lens;
-}
-
-// Dense field of droplets that stay put on the glass, gently shimmering.
-// Returns vec4(refraction.xy, specular, coverage).
-vec4 staticDroplets(vec2 uv, float density, float seed) {
-  vec2 guv = uv * density;
-  vec2 cell = floor(guv);
-  vec2 f = fract(guv) - 0.5;
-
-  vec2 rnd = hash2(cell + seed);
-  if (rnd.x > 0.6) return vec4(0.0); // still leaves gaps, but most cells get a droplet
-
-  vec2 center = (rnd - 0.5) * 0.6;
-  float radius = 0.12 + rnd.y * 0.16;
-  float elong = mix(1.0, 1.3, hash1(cell + seed + 9.0));
-  vec4 lens = dropLensElong(f - center, radius, elong);
-
-  float shimmer = 0.92 + 0.08 * sin(u_time * 0.6 + rnd.x * 30.0);
-  return vec4(lens.xyz * shimmer, lens.w);
-}
-
-// A near-permanent vertical rivulet: a thin wet thread running down the
-// glass, roughly straight with a little organic wobble. This is what earlier
-// drops leave behind once they've run all the way down.
-// Returns vec4(refraction.xy, specular, coverage).
-vec4 verticalTrack(vec2 uv, float columns, float seed) {
-  float scaledX = uv.x * columns;
-  float colId = floor(scaledX);
-  float fx = fract(scaledX) - 0.5;
-
-  vec2 rnd = hash2(vec2(colId, seed));
-  if (rnd.x > 0.4) return vec4(0.0); // only some columns have a track
-
-  float jitter = (rnd.y - 0.5) * 0.5;
-  float wobble = sin(uv.y * 18.0 + colId * 12.9) * 0.02 * hash1(vec2(colId, seed + 3.0));
-  float centerX = jitter + wobble;
-  float thickness = 0.05 + rnd.y * 0.05;
-  float lengthFrac = 0.5 + rnd.x * 0.45;
-  float cutoffY = 1.0 - lengthFrac;
-
-  float distX = fx - centerX;
-  float aa = fwidth(distX) + 0.001;
-  float mask = smoothstep(thickness + aa, thickness - aa, abs(distX));
-  mask *= smoothstep(cutoffY - 0.05, cutoffY + 0.05, uv.y); // fade out at the bottom tip
-  mask *= smoothstep(1.0, 0.97, uv.y);                      // tiny fade at the very top edge
-
-  vec2 refr = vec2(distX * 0.6, 0.0) * mask / columns;
-  float spec = smoothstep(thickness * 0.5, thickness * 0.1, abs(distX)) * mask * 0.5;
-
-  return vec4(refr, spec, mask);
-}
-
-// A drop that first forms in place (growing), then slides down accelerating
-// under gravity, stretching into a raindrop shape and leaving a wet streak.
-// Returns vec4(refraction.xy, specular, coverage).
-vec4 fallingDrop(vec2 uv, float columns, float seed) {
-  vec2 guv = uv * vec2(columns, columns * 0.55);
-  vec2 cell = floor(guv);
-  vec2 f = fract(guv) - 0.5;
-
-  vec2 rnd = hash2(cell + seed);
-  float speed = 0.12 + rnd.x * 0.30;
-  float phase = fract(u_time * speed + rnd.y * 8.0);
-
-  float posX = (rnd.y - 0.5) * 0.5;
-  const float topY = 0.65;
-  const float bottomY = -0.65;
-  const float pauseFrac = 0.30;   // fraction of the cycle spent just forming, not moving
-  const float slideFrac = 1.0 - pauseFrac;
-
-  // Stage 1: sits still and grows. Stage 2: eases into an accelerating slide
-  // (t*t), like gravity finally overcoming the surface tension holding it.
-  float slideT = clamp((phase - pauseFrac) / slideFrac, 0.0, 1.0);
-  float headY = mix(topY, bottomY, slideT * slideT);
-
-  float growth = smoothstep(0.0, pauseFrac * 0.8, phase);
-  float radius = (0.09 + rnd.x * 0.05) * mix(0.45, 1.0, growth);
-  float elong = mix(1.0, 1.8, growth); // rounds out while forming, stretches while sliding
-
-  vec4 lens = dropLensElong(f - vec2(posX, headY), radius, elong);
-
-  // Visible trail streak behind the head, only once it's actually sliding.
-  float alongTrail = clamp((topY - f.y) / max(topY - headY, 0.001), 0.0, 1.0);
-  float trailWidth = radius * 0.28 * (1.0 - alongTrail * 0.5);
-  float aaTrail = fwidth(f.x - posX) + 0.0008;
-  float inTrail = step(headY, f.y) * step(f.y, topY) * step(pauseFrac, phase)
-                * smoothstep(trailWidth + aaTrail, trailWidth - aaTrail, abs(f.x - posX));
-  float trailFade = inTrail * (1.0 - alongTrail * 0.7);
-  vec2 trailRefr = vec2(sign(f.x - posX) * 0.010, 0.0) * trailFade;
-  float trailSpec = trailFade * 0.25;
-
-  float fadeInOut = smoothstep(0.0, 0.06, phase) * smoothstep(1.0, 0.94, phase);
-
-  vec2 refr = (lens.xy + trailRefr) * fadeInOut;
-  float spec = (lens.z + trailSpec) * fadeInOut;
-  float coverage = max(lens.w, trailFade) * fadeInOut;
-
-  return vec4(refr, spec, coverage);
-}
-
-// Cheap radial blur so the background reads as an out-of-focus bokeh behind
-// the glass, the way a camera focused on the droplets would render it.
-vec3 blurredSample(vec2 uv, float radius) {
-  vec3 sum = texture(u_texture, uv).rgb;
-  float total = 1.0;
-  const int N = 10;
-  for (int i = 0; i < N; i++) {
-    float angle = (float(i) / float(N)) * 6.28318530718;
-    vec2 offset = vec2(cos(angle), sin(angle)) * radius;
-    sum += texture(u_texture, uv + offset).rgb;
-    total += 1.0;
-  }
-  return sum / total;
-}
-
-void main() {
-  vec2 uv = uvInterpolator;
-
-  vec4 d0 = fallingDrop(uv, 9.0, 42.0);
-  vec4 d1 = fallingDrop(uv * 1.15 + 4.2, 7.0, 137.0);
-
-  vec4 s0 = staticDroplets(uv, 26.0, 11.0);
-  vec4 s1 = staticDroplets(uv * 1.7 + 9.0, 34.0, 71.0);
-  vec4 s2 = staticDroplets(uv * 0.8 + 21.0, 18.0, 5.0);
-
-  vec4 t0 = verticalTrack(uv, 9.0, 42.0);
-  vec4 t1 = verticalTrack(uv, 7.0, 137.0);
-
-  vec2 refraction = d0.xy + d1.xy * 0.85
-                  + s0.xy + s1.xy * 0.8 + s2.xy * 0.9
-                  + t0.xy + t1.xy * 0.85;
-  float specular = d0.z + d1.z * 0.85
-                  + s0.z + s1.z * 0.8 + s2.z * 0.9
-                  + t0.z + t1.z * 0.85;
-  float coverage = max(max(max(d0.w, d1.w), max(s0.w, max(s1.w, s2.w))), max(t0.w, t1.w));
-
-  // The background is always slightly out of focus (bokeh); each droplet or
-  // track acts as its own tiny lens, briefly showing a sharp, refracted
-  // glimpse of what's behind the glass.
-  vec3 blurred = blurredSample(uv, 0.014);
-  vec3 sharp = texture(u_texture, uv + refraction * 0.6).rgb;
-
-  vec3 color = mix(blurred, sharp, clamp(coverage * 1.3, 0.0, 1.0));
-  color += specular * 0.55;
-
-  outColor = vec4(color, 1.0);
 }
 </script>
 
 <script type="module">
 import * as THREE from 'three';
 
+const rainVertShader = `
+varying vec2 uvInterpolator;
 
-const rainVertShader = document.getElementById('rain-vert').textContent;
-const rainFragShader = document.getElementById('rain-frag').textContent;
+void main() {
+  uvInterpolator = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const rainFragShader = `
+varying vec2 uvInterpolator;
+uniform float u_time;
+uniform sampler2D u_texture;
+
+float Random11(float inputValue, float seed) {
+  return fract(sin(inputValue * 345.456) * seed);
+}
+
+float Random21(vec2 inputValue, float seed) {
+  return fract(sin(dot(inputValue, vec2(123.456, 43.12))) * seed);
+}
+
+vec2 Drops(vec2 uv, float seed) {
+  float shiftY = Random11(0.5, seed);
+  uv.y += shiftY;
+
+  float cellsResolution = 10.0;
+  uv *= cellsResolution;
+
+  float rowIndex = floor(uv.y);
+  float shiftX = Random11(rowIndex, seed);
+  uv.x += shiftX;
+
+  vec2 cellIndex = floor(uv);
+  vec2 cellUv = fract(uv);
+
+  vec2 cellCenter = vec2(0.5);
+  float distanceFromCenter = distance(cellUv, cellCenter);
+
+  float isDropShown = step(0.8, Random21(cellIndex, seed + 14244.324));
+
+  float dropIntensity = 1.0 - fract(u_time * 0.1 + Random21(cellIndex, seed + 32132.432) * 2.0) * 2.0;
+  dropIntensity = sign(dropIntensity) * abs(dropIntensity * dropIntensity * dropIntensity * dropIntensity);
+  dropIntensity = clamp(dropIntensity, 0.0, 1.0);
+
+  float isInsideDrop = 1.0 - step(0.1, distanceFromCenter);
+
+  vec2 vecToCenter = normalize(cellCenter - cellUv);
+
+  vec2 dropValue = vecToCenter * distanceFromCenter * distanceFromCenter * 40.0;
+
+  vec2 drop = dropValue * isInsideDrop * isDropShown * dropIntensity;
+  return drop;
+}
+
+void main() {
+  vec2 uv = uvInterpolator;
+
+  vec2 drops = vec2(0.0);
+  for(int i = 0; i < 10; i++) {
+    drops += Drops(uv, 42424.43 + float(i) * 12313.432);
+  }
+
+  uv += drops;
+
+  vec4 color = texture2D(u_texture, uv);
+
+  gl_FragColor = color;
+}
+`;
 
 async function main() {
   const app = document.querySelector('#app');
@@ -257,142 +130,45 @@ async function main() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   app.appendChild(renderer.domElement);
 
+  // Ảnh nền ví dụ (bạn có thể thay bằng ảnh của riêng bạn)
+  const imageUrl = 'https://picsum.photos/id/29/1200/1600';
+
   const textureLoader = new THREE.TextureLoader();
+  textureLoader.crossOrigin = 'anonymous';
+  const texture = await textureLoader.loadAsync(imageUrl);
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
 
-  // Placeholder image (soft night-lights gradient) so the demo works without
-  // any external asset. Swap this for your own background.jpg in your project.
-  const defaultTexture = makeDefaultTexture();
+  const aspectRatio = texture.image.height / texture.image.width;
+  const planeHeight = 10;
+  const planeWidth = planeHeight / aspectRatio;
 
-  let plane = null;
+  const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 1, 1);
 
-  function buildPlane(texture) {
-    if (plane) {
-      scene.remove(plane);
-      plane.geometry.dispose();
-      plane.material.dispose();
-    }
+  const material = new THREE.ShaderMaterial({
+    vertexShader: rainVertShader,
+    fragmentShader: rainFragShader,
+    uniforms: {
+      u_time: { value: 0 },
+      u_texture: { value: texture },
+    },
+  });
+  const plane = new THREE.Mesh(geometry, material);
+  scene.add(plane);
 
-    const aspectRatio = texture.image.height / texture.image.width;
-    const planeHeight = 10;
-    const planeWidth = planeHeight / aspectRatio;
-
-    const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 1, 1);
-
-    const material = new THREE.ShaderMaterial({
-      vertexShader: rainVertShader,
-      fragmentShader: rainFragShader,
-      glslVersion: THREE.GLSL3, // required since the shaders use `in`/`out` and texture()
-      uniforms: {
-        u_time: { value: 0 },
-        u_texture: { value: texture },
-      },
-    });
-
-    plane = new THREE.Mesh(geometry, material);
-    scene.add(plane);
-
-    fitCameraToPlane(planeWidth, planeHeight);
+  function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
   }
-
-  function fitCameraToPlane(width, height) {
-    const aspect = window.innerWidth / window.innerHeight;
-    const targetAspect = width / height;
-    // Pull the camera back just enough that the plane fills the shorter axis.
-    const vFov = (camera.fov * Math.PI) / 180;
-    const distForHeight = (height / 2) / Math.tan(vFov / 2);
-    const distForWidth = distForHeight / (aspect / targetAspect);
-    camera.position.z = Math.max(distForHeight, distForWidth) * 1.02;
-  }
-
-  buildPlane(defaultTexture);
+  window.addEventListener('resize', onResize);
 
   function animationFrame(time) {
-    if (plane) plane.material.uniforms.u_time.value = time / 1000;
+    material.uniforms.u_time.value = time / 1000;
     renderer.render(scene, camera);
     requestAnimationFrame(animationFrame);
   }
   requestAnimationFrame(animationFrame);
-
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-
-  // File picker to try your own image.
-  const fileInput = document.getElementById('file-input');
-  document.getElementById('pick-btn').addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    textureLoader.load(url, (texture) => {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      buildPlane(texture);
-    });
-  });
-
-  function makeDefaultTexture() {
-    // High-contrast scene (sharp lines, dots, bright text) so UV refraction
-    // from the drops is obvious the moment the page loads — a flat gradient
-    // barely shows any distortion since there's nothing sharp to bend.
-    const c = document.createElement('canvas');
-    c.width = 1024; c.height = 683;
-    const ctx = c.getContext('2d');
-
-    const g = ctx.createLinearGradient(0, 0, 0, c.height);
-    g.addColorStop(0, '#0e1626');
-    g.addColorStop(0.55, '#131c2c');
-    g.addColorStop(1, '#05070c');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, c.width, c.height);
-
-    // Sharp grid lines — the classic way to make refraction visible.
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 2;
-    const step = 48;
-    for (let x = 0; x <= c.width; x += step) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, c.height);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= c.height; y += step) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(c.width, y);
-      ctx.stroke();
-    }
-
-    // Bright city-light dots with hard edges.
-    const rand = (a, b) => a + Math.random() * (b - a);
-    for (let i = 0; i < 90; i++) {
-      const x = rand(0, c.width);
-      const y = rand(0, c.height);
-      const r = rand(4, 16);
-      const hue = Math.random() < 0.5 ? '255,205,120' : '150,210,255';
-      ctx.fillStyle = `rgba(${hue},0.95)`;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = `rgba(${hue},0.5)`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(x, y, r * 1.8, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // Bold text — letters are great at revealing lens-like distortion.
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.font = 'bold 120px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('RAIN', c.width / 2, c.height / 2);
-
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }
 }
 
 main();
