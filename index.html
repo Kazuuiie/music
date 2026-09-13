@@ -98,10 +98,11 @@ vec3 staticDroplets(vec2 uv, float density, float seed) {
   return lens * shimmer;
 }
 
-// A drop that slides down under gravity, leaving a wet streak, AND reports
-// how "clear" the glass is at this pixel: right after the head passes, this
-// column is wiped clean (clarity -> 0); it slowly fogs back up (clarity -> 1)
-// until the next drop comes through. Fully time-based, no frame history needed.
+// A drop that first forms in place (growing), then slides down accelerating
+// under gravity, leaving a wet streak. Also reports how "clear" the glass is
+// at this pixel: right after the head passes, this column is wiped clean
+// (clarity -> 0); it slowly fogs back up (clarity -> 1) until the next drop
+// comes through. Fully time-based, no frame history needed.
 // Returns vec4(refraction.xy, specular, fogClarity).
 vec4 fallingDrop(vec2 uv, float columns, float seed) {
   vec2 guv = uv * vec2(columns, columns * 0.55);
@@ -115,27 +116,37 @@ vec4 fallingDrop(vec2 uv, float columns, float seed) {
   float posX = (rnd.y - 0.5) * 0.5;
   const float topY = 0.65;
   const float bottomY = -0.65;
-  float headY = mix(topY, bottomY, phase);
-  float radius = 0.09 + rnd.x * 0.06;
+  const float span = topY - bottomY;
+  const float pauseFrac = 0.30;   // fraction of the cycle spent just forming, not moving
+  const float slideFrac = 1.0 - pauseFrac;
+
+  // Stage 1: sits still and grows. Stage 2: eases into an accelerating slide
+  // (t*t), like gravity finally overcoming the surface tension holding it.
+  float slideT = clamp((phase - pauseFrac) / slideFrac, 0.0, 1.0);
+  float headY = mix(topY, bottomY, slideT * slideT);
+
+  float growth = smoothstep(0.0, pauseFrac * 0.8, phase);
+  float radius = (0.09 + rnd.x * 0.06) * mix(0.45, 1.0, growth);
 
   vec3 lens = dropLens(f - vec2(posX, headY), radius);
 
-  // Visible trail streak just behind the head.
+  // Visible trail streak behind the head, only once it's actually sliding.
   float alongTrail = clamp((topY - f.y) / max(topY - headY, 0.001), 0.0, 1.0);
   float trailWidth = radius * 0.30 * (1.0 - alongTrail * 0.5);
   float aaTrail = fwidth(f.x - posX) + 0.0008;
-  float inTrail = step(headY, f.y) * step(f.y, topY)
+  float inTrail = step(headY, f.y) * step(f.y, topY) * step(pauseFrac, phase)
                 * smoothstep(trailWidth + aaTrail, trailWidth - aaTrail, abs(f.x - posX));
   vec2 trailRefr = vec2(sign(f.x - posX) * 0.012, 0.0) * inTrail * (1.0 - alongTrail) * 0.6;
 
-  float fadeInOut = smoothstep(0.0, 0.12, phase) * smoothstep(1.0, 0.9, phase);
+  float fadeInOut = smoothstep(0.0, 0.06, phase) * smoothstep(1.0, 0.92, phase);
   vec3 visual = vec3((lens.xy + trailRefr) * fadeInOut, lens.z * fadeInOut);
 
-  // Fog clarity for this column: work out the phase at which the head would
-  // have passed this exact row, compare to "now" to get time-since-wiped.
+  // Fog clarity: invert the same motion law to find the phase at which the
+  // head would have passed this exact row, then compare to "now".
   float clearWidth = radius * 2.4;
   float widthMask = smoothstep(clearWidth, clearWidth * 0.5, abs(f.x - posX));
-  float phaseCross = clamp((topY - f.y) / (topY - bottomY), 0.0, 1.0);
+  float tAtRow = sqrt(clamp((topY - f.y) / span, 0.0, 1.0));
+  float phaseCross = pauseFrac + slideFrac * tAtRow;
   float timeSincePass = (phase >= phaseCross) ? (phase - phaseCross) : (phase - phaseCross + 1.0);
   float fogReturn = smoothstep(0.0, 0.85, timeSincePass); // 0 just wiped, 1 fully fogged again
   float clarity = mix(1.0, fogReturn, widthMask);
