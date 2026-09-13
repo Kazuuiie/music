@@ -62,11 +62,11 @@ vec2 hash2(vec2 p) {
 
 // One circular drop as a hemispherical lens. Edges are anti-aliased with
 // fwidth() so they stay smooth regardless of screen resolution or zoom.
-// Returns vec3(refraction.xy, specular).
-vec3 dropLens(vec2 localPos, float radius) {
+// Returns vec4(refraction.xy, specular, coverage).
+vec4 dropLens(vec2 localPos, float radius) {
   float d = length(localPos);
   float aa = fwidth(d) + 0.0004;
-  if (d >= radius + aa) return vec3(0.0);
+  if (d >= radius + aa) return vec4(0.0);
 
   vec2 n2 = localPos / radius;
   float z = sqrt(max(0.0, 1.0 - dot(n2, n2)));
@@ -78,32 +78,71 @@ vec3 dropLens(vec2 localPos, float radius) {
   float spec = pow(max(dot(normal, lightDir), 0.0), 40.0);
 
   float edgeFade = smoothstep(radius + aa, radius - aa, d);
-  return vec3(refraction * edgeFade, spec * edgeFade);
+  return vec4(refraction * edgeFade, spec * edgeFade, edgeFade);
 }
 
-// Tiny droplets that stay put on the glass, gently shimmering.
-vec3 staticDroplets(vec2 uv, float density, float seed) {
+// Same lens, stretched vertically by `elong` to get a raindrop-like shape
+// instead of a perfect circle (elong = 1.0 stays circular).
+vec4 dropLensElong(vec2 localPos, float radius, float elong) {
+  vec2 squashed = vec2(localPos.x, localPos.y / elong);
+  vec4 lens = dropLens(squashed, radius);
+  lens.xy *= vec2(1.0, elong);
+  return lens;
+}
+
+// Dense field of droplets that stay put on the glass, gently shimmering.
+// Returns vec4(refraction.xy, specular, coverage).
+vec4 staticDroplets(vec2 uv, float density, float seed) {
   vec2 guv = uv * density;
   vec2 cell = floor(guv);
   vec2 f = fract(guv) - 0.5;
 
   vec2 rnd = hash2(cell + seed);
-  if (rnd.x > 0.45) return vec3(0.0);
+  if (rnd.x > 0.6) return vec4(0.0); // still leaves gaps, but most cells get a droplet
 
   vec2 center = (rnd - 0.5) * 0.6;
-  float radius = 0.14 + rnd.y * 0.12;
-  vec3 lens = dropLens(f - center, radius);
+  float radius = 0.12 + rnd.y * 0.16;
+  float elong = mix(1.0, 1.3, hash1(cell + seed + 9.0));
+  vec4 lens = dropLensElong(f - center, radius, elong);
 
-  float shimmer = 0.9 + 0.1 * sin(u_time * 0.8 + rnd.x * 30.0);
-  return lens * shimmer;
+  float shimmer = 0.92 + 0.08 * sin(u_time * 0.6 + rnd.x * 30.0);
+  return vec4(lens.xyz * shimmer, lens.w);
+}
+
+// A near-permanent vertical rivulet: a thin wet thread running down the
+// glass, roughly straight with a little organic wobble. This is what earlier
+// drops leave behind once they've run all the way down.
+// Returns vec4(refraction.xy, specular, coverage).
+vec4 verticalTrack(vec2 uv, float columns, float seed) {
+  float scaledX = uv.x * columns;
+  float colId = floor(scaledX);
+  float fx = fract(scaledX) - 0.5;
+
+  vec2 rnd = hash2(vec2(colId, seed));
+  if (rnd.x > 0.4) return vec4(0.0); // only some columns have a track
+
+  float jitter = (rnd.y - 0.5) * 0.5;
+  float wobble = sin(uv.y * 18.0 + colId * 12.9) * 0.02 * hash1(vec2(colId, seed + 3.0));
+  float centerX = jitter + wobble;
+  float thickness = 0.05 + rnd.y * 0.05;
+  float lengthFrac = 0.5 + rnd.x * 0.45;
+  float cutoffY = 1.0 - lengthFrac;
+
+  float distX = fx - centerX;
+  float aa = fwidth(distX) + 0.001;
+  float mask = smoothstep(thickness + aa, thickness - aa, abs(distX));
+  mask *= smoothstep(cutoffY - 0.05, cutoffY + 0.05, uv.y); // fade out at the bottom tip
+  mask *= smoothstep(1.0, 0.97, uv.y);                      // tiny fade at the very top edge
+
+  vec2 refr = vec2(distX * 0.6, 0.0) * mask / columns;
+  float spec = smoothstep(thickness * 0.5, thickness * 0.1, abs(distX)) * mask * 0.5;
+
+  return vec4(refr, spec, mask);
 }
 
 // A drop that first forms in place (growing), then slides down accelerating
-// under gravity, leaving a wet streak. Also reports how "clear" the glass is
-// at this pixel: right after the head passes, this column is wiped clean
-// (clarity -> 0); it slowly fogs back up (clarity -> 1) until the next drop
-// comes through. Fully time-based, no frame history needed.
-// Returns vec4(refraction.xy, specular, fogClarity).
+// under gravity, stretching into a raindrop shape and leaving a wet streak.
+// Returns vec4(refraction.xy, specular, coverage).
 vec4 fallingDrop(vec2 uv, float columns, float seed) {
   vec2 guv = uv * vec2(columns, columns * 0.55);
   vec2 cell = floor(guv);
@@ -116,7 +155,6 @@ vec4 fallingDrop(vec2 uv, float columns, float seed) {
   float posX = (rnd.y - 0.5) * 0.5;
   const float topY = 0.65;
   const float bottomY = -0.65;
-  const float span = topY - bottomY;
   const float pauseFrac = 0.30;   // fraction of the cycle spent just forming, not moving
   const float slideFrac = 1.0 - pauseFrac;
 
@@ -126,39 +164,36 @@ vec4 fallingDrop(vec2 uv, float columns, float seed) {
   float headY = mix(topY, bottomY, slideT * slideT);
 
   float growth = smoothstep(0.0, pauseFrac * 0.8, phase);
-  float radius = (0.09 + rnd.x * 0.06) * mix(0.45, 1.0, growth);
+  float radius = (0.09 + rnd.x * 0.05) * mix(0.45, 1.0, growth);
+  float elong = mix(1.0, 1.8, growth); // rounds out while forming, stretches while sliding
 
-  vec3 lens = dropLens(f - vec2(posX, headY), radius);
+  vec4 lens = dropLensElong(f - vec2(posX, headY), radius, elong);
 
   // Visible trail streak behind the head, only once it's actually sliding.
   float alongTrail = clamp((topY - f.y) / max(topY - headY, 0.001), 0.0, 1.0);
-  float trailWidth = radius * 0.30 * (1.0 - alongTrail * 0.5);
+  float trailWidth = radius * 0.28 * (1.0 - alongTrail * 0.5);
   float aaTrail = fwidth(f.x - posX) + 0.0008;
   float inTrail = step(headY, f.y) * step(f.y, topY) * step(pauseFrac, phase)
                 * smoothstep(trailWidth + aaTrail, trailWidth - aaTrail, abs(f.x - posX));
-  vec2 trailRefr = vec2(sign(f.x - posX) * 0.012, 0.0) * inTrail * (1.0 - alongTrail) * 0.6;
+  float trailFade = inTrail * (1.0 - alongTrail * 0.7);
+  vec2 trailRefr = vec2(sign(f.x - posX) * 0.010, 0.0) * trailFade;
+  float trailSpec = trailFade * 0.25;
 
-  float fadeInOut = smoothstep(0.0, 0.06, phase) * smoothstep(1.0, 0.92, phase);
-  vec3 visual = vec3((lens.xy + trailRefr) * fadeInOut, lens.z * fadeInOut);
+  float fadeInOut = smoothstep(0.0, 0.06, phase) * smoothstep(1.0, 0.94, phase);
 
-  // Fog clarity: invert the same motion law to find the phase at which the
-  // head would have passed this exact row, then compare to "now".
-  float clearWidth = radius * 2.4;
-  float widthMask = smoothstep(clearWidth, clearWidth * 0.5, abs(f.x - posX));
-  float tAtRow = sqrt(clamp((topY - f.y) / span, 0.0, 1.0));
-  float phaseCross = pauseFrac + slideFrac * tAtRow;
-  float timeSincePass = (phase >= phaseCross) ? (phase - phaseCross) : (phase - phaseCross + 1.0);
-  float fogReturn = smoothstep(0.0, 0.85, timeSincePass); // 0 just wiped, 1 fully fogged again
-  float clarity = mix(1.0, fogReturn, widthMask);
+  vec2 refr = (lens.xy + trailRefr) * fadeInOut;
+  float spec = (lens.z + trailSpec) * fadeInOut;
+  float coverage = max(lens.w, trailFade) * fadeInOut;
 
-  return vec4(visual, clarity);
+  return vec4(refr, spec, coverage);
 }
 
-// Cheap radial blur to fake a frosted/steamed patch of glass.
+// Cheap radial blur so the background reads as an out-of-focus bokeh behind
+// the glass, the way a camera focused on the droplets would render it.
 vec3 blurredSample(vec2 uv, float radius) {
   vec3 sum = texture(u_texture, uv).rgb;
   float total = 1.0;
-  const int N = 8;
+  const int N = 10;
   for (int i = 0; i < N; i++) {
     float angle = (float(i) / float(N)) * 6.28318530718;
     vec2 offset = vec2(cos(angle), sin(angle)) * radius;
@@ -172,24 +207,31 @@ void main() {
   vec2 uv = uvInterpolator;
 
   vec4 d0 = fallingDrop(uv, 9.0, 42.0);
-  vec4 d1 = fallingDrop(uv * 1.3 + 4.2, 7.0, 137.0);
+  vec4 d1 = fallingDrop(uv * 1.15 + 4.2, 7.0, 137.0);
 
-  vec3 s0 = staticDroplets(uv, 14.0, 11.0);
-  vec3 s1 = staticDroplets(uv * 1.6 + 9.0, 20.0, 71.0) * 0.7;
+  vec4 s0 = staticDroplets(uv, 26.0, 11.0);
+  vec4 s1 = staticDroplets(uv * 1.7 + 9.0, 34.0, 71.0);
+  vec4 s2 = staticDroplets(uv * 0.8 + 21.0, 18.0, 5.0);
 
-  vec2 refraction = (d0.xy + d1.xy * 0.85 + s0.xy + s1.xy) * 0.35;
-  float specular = d0.z + d1.z * 0.85 + s0.z + s1.z;
+  vec4 t0 = verticalTrack(uv, 9.0, 42.0);
+  vec4 t1 = verticalTrack(uv, 7.0, 137.0);
 
-  // Fog: whichever layer most recently wiped this spot wins (lowest = clearest).
-  float fog = min(d0.w, d1.w);
+  vec2 refraction = d0.xy + d1.xy * 0.85
+                  + s0.xy + s1.xy * 0.8 + s2.xy * 0.9
+                  + t0.xy + t1.xy * 0.85;
+  float specular = d0.z + d1.z * 0.85
+                  + s0.z + s1.z * 0.8 + s2.z * 0.9
+                  + t0.z + t1.z * 0.85;
+  float coverage = max(max(max(d0.w, d1.w), max(s0.w, max(s1.w, s2.w))), max(t0.w, t1.w));
 
-  vec3 sharp = texture(u_texture, uv + refraction).rgb;
-  vec3 blurred = blurredSample(uv, 0.010);
-  vec3 frosted = mix(blurred, vec3(dot(blurred, vec3(0.299, 0.587, 0.114))), 0.25)
-               + vec3(0.035, 0.04, 0.045);
+  // The background is always slightly out of focus (bokeh); each droplet or
+  // track acts as its own tiny lens, briefly showing a sharp, refracted
+  // glimpse of what's behind the glass.
+  vec3 blurred = blurredSample(uv, 0.014);
+  vec3 sharp = texture(u_texture, uv + refraction * 0.6).rgb;
 
-  vec3 color = mix(sharp, frosted, fog * 0.9);
-  color += specular * 0.5;
+  vec3 color = mix(blurred, sharp, clamp(coverage * 1.3, 0.0, 1.0));
+  color += specular * 0.55;
 
   outColor = vec4(color, 1.0);
 }
@@ -197,6 +239,7 @@ void main() {
 
 <script type="module">
 import * as THREE from 'three';
+
 
 const rainVertShader = document.getElementById('rain-vert').textContent;
 const rainFragShader = document.getElementById('rain-frag').textContent;
