@@ -1,177 +1,1974 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-<meta charset="UTF-8" />
-<title>Hiệu ứng giọt nước - Ví dụ Three.js</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>khanz — bio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    background: #000;
-    height: 100%;
-    width: 100%;
+  :root{
+    --bg: #08090d;
+    --panel: rgba(22,23,29,0.55);
+    --panel-border: rgba(255,255,255,0.08);
+    --panel-strong: rgba(14,15,19,0.74);
+    --text: #f4f4f6;
+    --text-dim: #9b9ba5;
+    --text-faint: #6c6c76;
+    --accent: #7dd3a8;
+    --accent-2: #d8b787;
+    --music-accent: #8fd6b0;
+    --music-accent-soft: #c9b79d;
+    --radius: 18px;
+    --radius-sm: 12px;
+    --ease: cubic-bezier(.16,.9,.3,1);
   }
-  #app {
-    width: 100vw;
-    height: 100vh;
+
+  *{ box-sizing: border-box; margin:0; padding:0; }
+  html,body{ height:100%; }
+
+  body{
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--text);
+    background: #050609;
+    min-height: 100vh;
+    overflow-x: hidden;
+    cursor: default;
   }
-  #app canvas {
-    display: block;
+
+  ::selection{ background: rgba(125,211,168,0.28); color: #fff; }
+  .bg{
+    position: fixed; inset: 0; z-index: 0; overflow: hidden;
+    background:
+      radial-gradient(1100px 650px at 80% 30%, rgba(255,150,90,0.11), transparent 60%),
+      radial-gradient(900px 600px at 15% 82%, rgba(125,211,168,0.09), transparent 62%),
+      radial-gradient(700px 500px at 55% 100%, rgba(216,183,135,0.06), transparent 65%),
+      linear-gradient(180deg, #0c1320 0%, #090c14 45%, #05060a 100%);
   }
-  #hint {
-    position: fixed;
-    bottom: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    color: rgba(255,255,255,0.6);
-    font-family: sans-serif;
-    font-size: 13px;
+  .bg-media{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; object-position:center center;
+    display:none; pointer-events:none;
+  }
+
+  /* Lớp kính mờ/giọt sương: chỉ tác động lên background */
+  .bg-overlay{
+    position:absolute; inset:0; pointer-events:none;
+    display:none; z-index:2;
+  }
+
+  /* Light mask lấy trực tiếp từ các vùng sáng của video */
+  .bg-light{
+    position:absolute; inset:-2%; width:104%; height:104%;
+    display:none; pointer-events:none; z-index:3;
+    filter:blur(18px) saturate(1.05);
+    mix-blend-mode:screen;
+    opacity:.88;
+    transform:scale(1.02);
+  }
+
+  .bg-fog{
+    position:absolute; inset:0; pointer-events:none;
+    display:none; z-index:4;
+    /* Full-screen backdrop-filter is expensive; keep it subtle. */
+    transform:translateZ(0);
+  }
+  @keyframes auroraDrift{
+    0%, 100% { transform: translate3d(0,0,0) scale(1); }
+    50%      { transform: translate3d(-1.5%, 1%, 0) scale(1.035); }
+  }
+
+  /* Hạt film-grain rất mảnh phủ toàn trang để nền không bị "phẳng" như
+     một gradient CSS thông thường — tăng cảm giác chất liệu, cao cấp. */
+  .grain{
+    position: fixed; inset: -10%; z-index: 1; pointer-events:none;
+    opacity: .035; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .scrim-left{
+    position: fixed; inset: 0; z-index: 2;
+    background: linear-gradient(90deg,
+      rgba(5,6,10,0.92) 0%, rgba(5,6,10,0.86) 30%,
+      rgba(5,6,10,0.35) 48%, rgba(5,6,10,0) 60%);
     pointer-events: none;
   }
+
+  @media (prefers-reduced-motion: reduce){
+    .bg{ animation: none; }
+  }
+
+  .page{
+    position: relative; z-index: 3; min-height: 100vh;
+    padding: 40px clamp(24px, 5vw, 64px);
+    display: flex; flex-direction: column;
+  }
+
+  nav{ display:flex; align-items:center; gap: 40px; flex-wrap: wrap; row-gap: 14px; }
+  nav a{
+    color: var(--text-dim); text-decoration:none; font-size: 13px;
+    font-weight: 600; letter-spacing: .03em; position: relative;
+    padding-bottom: 10px; transition: color .2s ease;
+  }
+  nav a::before{
+    content:""; position:absolute; left:0; bottom:0; width:100%; height:2px;
+    background: var(--text); border-radius: 2px; transform: scaleX(0);
+    transform-origin: left; transition: transform .28s var(--ease);
+  }
+  nav a:hover{ color: var(--text); }
+  nav a:hover::before{ transform: scaleX(1); }
+  nav a.active{ color: var(--text); }
+  nav a.active::after{
+    content:""; position:absolute; left:0; bottom:0;
+    width: 16px; height: 2px; background: var(--accent); border-radius: 2px;
+  }
+
+  .clock-pill{
+    margin-left:auto; display:flex; align-items:center; gap:8px;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    padding: 10px 16px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; color: var(--text);
+    transition: border-color .25s ease;
+  }
+  .clock-pill:hover{ border-color: rgba(125,211,168,0.28); }
+  .clock-pill svg{ width:14px; height:14px; opacity:.75; }
+
+  /* Reveal tuần tự một lần khi trang mở — không lặp lại, không chạy trên hover. */
+  .reveal{ opacity:0; transform: translateY(14px); }
+  .ready .reveal{
+    animation: revealUp .7s var(--ease) forwards;
+  }
+  .ready nav.reveal{ animation-delay: .05s; }
+  .ready .status.reveal{ animation-delay: .16s; }
+  .ready .identity.reveal{ animation-delay: .24s; }
+  .ready .bio-text.reveal{ animation-delay: .34s; }
+  .ready .tags.reveal{ animation-delay: .42s; }
+  .ready .links.reveal{ animation-delay: .5s; }
+  .ready .player.reveal{ animation-delay: .6s; }
+  .ready .weather.reveal{ animation-delay: .72s; }
+  @keyframes revealUp{
+    to{ opacity:1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .reveal{ opacity:1; transform:none; animation:none !important; }
+  }
+
+  .content{
+    margin-top: auto; padding-top: 60px; max-width: 560px;
+    display:flex; flex-direction:column; gap: 22px;
+  }
+
+  .status{ display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--text-dim); font-weight: 600; }
+  .status .dot{
+    --status-rgb: 125,211,168;
+    width:7px; height:7px; border-radius:50%;
+    background: rgb(var(--status-rgb));
+    animation: statusPulse 2.4s ease-out infinite;
+  }
+  @keyframes statusPulse{
+    0%   { box-shadow: 0 0 0 0 rgba(var(--status-rgb), 0.55); }
+    70%  { box-shadow: 0 0 0 9px rgba(var(--status-rgb), 0); }
+    100% { box-shadow: 0 0 0 0 rgba(var(--status-rgb), 0); }
+  }
+
+  /* Badge hoạt động (đang chơi game / đang nghe nhạc / custom status) —
+     nằm ngay dưới @handle, kế bên avatar. Bấm vào để mở rộng xem chi tiết
+     (khi có hoạt động thật, ví dụ đang chơi game) — xem .activity-detail. */
+  .activity-wrap{ display:flex; flex-direction:column; }
+
+  .activity-line{
+    display:none; align-items:center; gap:8px;
+    font-size: 12.5px; color: var(--text); font-weight: 600;
+    margin-top: 8px;
+    width: fit-content; max-width: 100%;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--panel-border);
+    padding: 5px 12px 5px 5px;
+    border-radius: 999px;
+    transition: background .18s ease, border-color .18s ease;
+  }
+  .activity-line.clickable{ cursor: pointer; }
+  .activity-line.clickable:hover{ background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.16); }
+  .activity-line img{
+    width: 20px; height: 20px; border-radius: 6px; flex-shrink:0;
+    object-fit: cover; background: rgba(255,255,255,0.08);
+  }
+  .activity-line svg{ width:15px; height:15px; flex-shrink:0; opacity:.9; color: var(--accent); }
+  .activity-line span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .activity-line span b{ font-weight:700; }
+  .activity-line .chevron{
+    width:11px; height:11px; opacity:.55; margin-left:2px; flex-shrink:0;
+    transition: transform .2s ease;
+  }
+  .activity-line.open .chevron{ transform: rotate(180deg); }
+
+  /* Panel chi tiết — thu gọn bằng max-height/opacity nên có hiệu ứng mở rộng mượt */
+  .activity-detail{
+    max-height: 0; opacity: 0; overflow: hidden;
+    width: fit-content; max-width: 340px;
+    margin-top: 0;
+    background: var(--panel-strong); border: 1px solid var(--panel-border);
+    border-radius: var(--radius-sm);
+    transition: max-height .32s ease, opacity .25s ease, margin-top .32s ease;
+  }
+  .activity-detail.open{ max-height: 240px; opacity: 1; margin-top: 8px; }
+  .activity-detail-inner{ display:flex; gap:12px; padding: 12px 14px; }
+  .activity-detail-inner img{
+    width: 54px; height: 54px; border-radius: 12px; flex-shrink:0;
+    object-fit: cover; background: rgba(255,255,255,0.08);
+  }
+  .activity-detail-text{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .activity-detail-name{ font-size: 13.5px; font-weight: 700; }
+  .activity-detail-line{
+    font-size: 12px; color: var(--text-dim); font-weight: 600;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .activity-detail-time{ font-size: 11px; color: var(--text-faint); font-weight:600; margin-top: 4px; }
+
+  .identity{ display:flex; align-items:flex-start; gap: 22px; }
+
+  .avatar-wrap{ position: relative; width: 88px; height: 88px; flex-shrink:0; }
+
+  /* Vành xoay rất chậm quanh avatar, dùng conic-gradient — chỉ hiện như
+     một viền sáng mảnh phía sau, không lấn vào ảnh đại diện. */
+  .avatar-wrap::before{
+    content:""; position:absolute; inset:-4px; border-radius:50%;
+    background: conic-gradient(from 0deg, rgba(125,211,168,.55), rgba(216,183,135,.35), transparent 40%, transparent 60%, rgba(125,211,168,.55));
+    animation: ringSpin 9s linear infinite;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  }
+  @keyframes ringSpin{ to{ transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ .avatar-wrap::before{ animation: none; } }
+
+  .avatar{
+    --status-rgb: 125,211,168;
+    width: 88px; height: 88px; border-radius: 50%; flex-shrink:0;
+    background: linear-gradient(145deg, #2a2d38, #17181e);
+    background-size: cover; background-position: center;
+    border: 1px solid var(--panel-border);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 10px; font-weight:700; letter-spacing:.03em;
+    color: rgba(255,255,255,0.28); text-align:center; line-height:1.4; padding: 6px;
+    white-space: pre-line;
+    transition: background-image .35s ease;
+    animation: cloudGlow 6s ease-in-out infinite;
+  }
+
+  /* Quầng sáng mềm quanh avatar, nhiều lớp mờ chồng lên nhau như đám mây
+     thay vì một vòng viền cứng — màu lấy theo trạng thái Discord (--status-rgb). */
+  @keyframes cloudGlow{
+    0%, 100% {
+      box-shadow:
+        0 0 16px 3px  rgba(var(--status-rgb), 0.30),
+        0 0 34px 12px rgba(var(--status-rgb), 0.16),
+        0 0 56px 22px rgba(var(--status-rgb), 0.08);
+    }
+    50% {
+      box-shadow:
+        0 0 22px 6px  rgba(var(--status-rgb), 0.40),
+        0 0 44px 16px rgba(var(--status-rgb), 0.20),
+        0 0 68px 28px rgba(var(--status-rgb), 0.10);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .avatar{ animation: none; box-shadow: 0 0 24px 8px rgba(var(--status-rgb), 0.22); }
+  }
+
+  /* Lớp phủ viền trang trí Discord (avatar decoration / Nitro frame).
+     Ảnh trang trí của Discord vốn được thiết kế lớn hơn avatar một chút
+     nên cần phóng to ra ngoài viền avatar để khớp đúng tỉ lệ gốc. */
+  .avatar-deco{
+    position: absolute; inset: -15%;
+    background-size: contain; background-position: center; background-repeat: no-repeat;
+    pointer-events: none;
+    display: none;
+  }
+  .avatar-deco.show{ display: block; }
+
+  .id-text{ min-width: 0; }
+  .id-text h1{
+    font-family: 'Space Grotesk', 'Manrope', sans-serif;
+    font-size: 36px; font-weight: 700; letter-spacing: -0.02em; line-height:1.1;
+    background: linear-gradient(120deg, #ffffff 45%, #cfd6d1 75%, var(--accent) 130%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .id-text .handle{ margin-top: 7px; font-size: 14px; color: var(--text-dim); font-weight: 600; }
+
+  .bio-text{ font-size: 14.5px; line-height: 1.65; color: var(--text-dim); max-width: 400px; }
+
+  .tags{ display:flex; gap:10px; flex-wrap:wrap; }
+  .tag{
+    padding: 8px 16px; border-radius: 999px; background: rgba(255,255,255,0.04);
+    border: 1px solid var(--panel-border); font-size: 12.5px; font-weight: 600; color: var(--text);
+    transition: border-color .2s ease, background .2s ease;
+  }
+  .tag:hover{ border-color: rgba(125,211,168,0.3); background: rgba(125,211,168,0.06); }
+
+  .links{ display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; max-width: 500px; }
+  .link-card{
+    position: relative; overflow: hidden;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border-radius: var(--radius-sm); padding: 14px 14px 12px; text-decoration:none;
+    color: var(--text); display:flex; flex-direction:column; justify-content:space-between;
+    gap: 18px; transition: transform .22s var(--ease), background .18s ease, border-color .18s ease;
+    min-height: 78px;
+  }
+  button.link-card{
+    appearance:none; -webkit-appearance:none; width:100%; font:inherit; text-align:left; cursor:pointer;
+  }
+
+  .link-card::after{
+    content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    background: radial-gradient(120px circle at var(--mx,50%) var(--my,50%), rgba(125,211,168,.16), transparent 70%);
+    opacity:0; transition: opacity .25s ease;
+  }
+  .link-card:hover{ transform: translateY(-2px); background: rgba(30,31,38,0.7); border-color: rgba(255,255,255,0.16); }
+  .link-card:hover::after{ opacity:1; }
+  .link-card .top{ display:flex; align-items:center; justify-content:space-between; position:relative; z-index:1; }
+  .link-card svg.icon{ width:18px; height:18px; transition: transform .25s var(--ease); }
+  .link-card:hover svg.icon{ transform: translateY(-1px); }
+  .link-card svg.arrow{ width:12px; height:12px; opacity:.55; transition: transform .22s var(--ease); }
+  .link-card:hover svg.arrow{ transform: translate(1px,-1px); opacity:.85; }
+  .link-card .label{ font-size: 12.5px; font-weight: 600; position:relative; z-index:1; }
+  @media (prefers-reduced-motion: reduce){ .link-card, .link-card svg.icon, .link-card svg.arrow{ transition:none; } }
+
+  /* ========================= MUSIC PLAYER (gọn, sạch) ========================= */
+  .player{
+    position:relative;
+    background: var(--panel-strong);
+    border: 1px solid rgba(255,255,255,0.09);
+    backdrop-filter: blur(22px) saturate(130%); -webkit-backdrop-filter: blur(22px) saturate(130%);
+    border-radius: 18px; padding: 14px; max-width: 420px;
+    display:flex; flex-direction:column; gap: 12px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.22);
+    transition: border-color .25s ease;
+  }
+  .player.is-playing{ border-color: rgba(143,214,176,.16); }
+
+  .player-top{ display:flex; align-items:center; gap:12px; }
+  .player-art-wrap{ position:relative; width:52px; height:52px; flex:0 0 52px; }
+  /* Vòng "thở" rất nhẹ phía sau ảnh bìa — điểm chuyển động duy nhất của cả
+     khối player, thay cho việc cộng dồn nhiều hiệu ứng (quay, nhấp nháy, eq). */
+  .player-art-wrap::before{
+    content:""; position:absolute; inset:-5px; border-radius:16px;
+    background: var(--accent); opacity:0; filter: blur(9px);
+    animation: breathe 2.6s ease-in-out infinite; pointer-events:none;
+  }
+  .player.is-playing .player-art-wrap::before{ opacity:.35; }
+  @keyframes breathe{ 0%,100%{ opacity:.22; transform:scale(.96); } 50%{ opacity:.4; transform:scale(1.04); } }
+  @media (prefers-reduced-motion: reduce){ .player-art-wrap::before{ animation:none; } }
+  .player-art{
+    width:52px; height:52px; border-radius:13px; position:relative; z-index:1;
+    background: linear-gradient(160deg,#2b2f3a,#121319);
+    background-size: cover; background-position: center; flex-shrink:0;
+    border:1px solid rgba(255,255,255,.12);
+    box-shadow: 0 6px 16px rgba(0,0,0,.28);
+  }
+
+  .player-info{ flex:1; min-width:0; cursor:default; }
+  .player-listening{
+    display:flex; align-items:center; gap:6px; font-size:11px;
+    color:var(--text-faint); font-weight:600; margin-bottom:3px;
+  }
+  .player-listening .dot{
+    width:5px; height:5px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 8px rgba(125,211,168,.4);
+  }
+  .player-title{
+    font-size:14px; font-weight:700; letter-spacing:-.01em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .player-artist{
+    font-size:11.5px; color:var(--text-dim); margin-top:1px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  .player-actions{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .icon-btn{
+    width:28px; height:28px; border-radius:50%; background:rgba(255,255,255,.05);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    text-decoration:none; border:1px solid transparent; cursor:pointer; color:var(--text);
+    transition:background .18s ease, border-color .18s ease, color .18s ease;
+  }
+  .icon-btn:hover{ background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.08); }
+  .icon-btn:active{ transform:scale(.94); }
+  .icon-btn svg{ width:13px; height:13px; }
+  .icon-btn.spotify svg{ width:14px; height:14px; color:#1ed760; }
+  .icon-btn.list-open{ background:rgba(143,214,176,.10); color:var(--accent); border-color:rgba(143,214,176,.10); }
+
+  .progress-row{
+    display:flex; align-items:center; gap:8px; font-size:10px;
+    color:var(--text-faint); font-weight:600;
+  }
+  .progress-track{
+    position:relative; flex:1; height:4px; border-radius:99px;
+    background:rgba(255,255,255,.08); cursor:pointer; overflow:visible;
+  }
+  .progress-fill{
+    position:relative; width:0%; height:100%; border-radius:99px;
+    background: var(--accent);
+    transition:width .15s linear;
+  }
+  .progress-thumb{
+    position:absolute; top:50%; right:0; width:9px; height:9px;
+    transform:translate(50%,-50%); border-radius:50%;
+    background:#fff; opacity:0; box-shadow:0 2px 6px rgba(0,0,0,.4);
+    transition:opacity .16s ease;
+  }
+  .progress-track:hover .progress-thumb{ opacity:1; }
+
+  .player-bottom{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .player-controls{ display:flex; align-items:center; justify-content:center; gap:13px; flex:1; }
+  .player-controls button{
+    position:relative; background:none; border:none; cursor:pointer; color:var(--text-dim);
+    display:flex; align-items:center; justify-content:center; padding:0;
+    transition:color .16s ease, transform .16s ease;
+  }
+  .player-controls button:hover{ color:var(--text); }
+  .player-controls button:active{ transform:scale(.92); }
+  .player-controls button svg{ width:14px; height:14px; }
+  .player-controls .play-btn{
+    width:34px; height:34px; background:#fff; border-radius:50%;
+    color:#0a0a0a; box-shadow:0 4px 12px rgba(0,0,0,.25);
+  }
+  .player-controls .play-btn:hover{ color:#0a0a0a; transform:scale(1.04); }
+  .player-controls .play-btn svg{ width:14px; height:14px; }
+
+  .control-btn.active{ color:var(--accent); }
+  .control-btn.active::after{
+    content:""; position:absolute; bottom:-6px; width:3px; height:3px;
+    border-radius:50%; background:currentColor;
+  }
+
+  .volume-wrap{ display:flex; align-items:center; gap:5px; min-width:64px; }
+  .volume-wrap .volume-btn{ width:22px; height:22px; background:transparent; }
+  .volume-wrap .volume-btn svg{ width:13px; height:13px; }
+  .volume-range{
+    appearance:none; -webkit-appearance:none; width:42px; height:3px;
+    border-radius:99px; background:rgba(255,255,255,.09); outline:none; cursor:pointer;
+  }
+  .volume-range::-webkit-slider-thumb{
+    appearance:none; -webkit-appearance:none; width:9px; height:9px; border-radius:50%;
+    background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.35);
+  }
+  .volume-range::-moz-range-thumb{
+    width:9px; height:9px; border:none; border-radius:50%; background:#fff;
+  }
+
+  .playlist-panel{
+    display:none; flex-direction:column; gap:4px;
+    max-height:250px; overflow-y:auto;
+    border-top:1px solid var(--panel-border);
+    padding-top:10px; margin-top:1px; position:relative; z-index:2;
+  }
+  .playlist-panel.open{ display:flex; }
+  .playlist-panel::-webkit-scrollbar{ width:5px; }
+  .playlist-panel::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.12); border-radius:4px; }
+
+  .playlist-item{
+    display:flex; align-items:center; gap:10px; padding:8px; border-radius:12px;
+    cursor:pointer; color:var(--text-dim);
+    transition:background .15s ease, color .15s ease, transform .15s ease;
+  }
+  .playlist-item:hover{ background:rgba(255,255,255,.055); color:var(--text); transform:translateX(2px); }
+  .playlist-item.active{ background:rgba(125,211,168,.08); color:var(--text); }
+  .playlist-thumb{
+    width:38px; height:38px; border-radius:9px; flex:0 0 38px;
+    background:linear-gradient(145deg,#2b2f3a,#121319); background-size:cover; background-position:center;
+    border:1px solid rgba(255,255,255,.08);
+  }
+  .playlist-meta{ min-width:0; flex:1; }
+  .playlist-item .pi-name{
+    display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:12px; font-weight:700;
+  }
+  .playlist-item .pi-name b{ font-weight:800; }
+  .playlist-item .pi-artist{
+    display:block; margin-top:2px; font-size:10.5px; color:var(--text-faint);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .playlist-item .pi-dur{ flex-shrink:0; font-size:10.5px; color:var(--text-faint); font-weight:700; }
+  /* Visualizer THẬT trong playlist — chiều cao được JS lấy từ AnalyserNode,
+     không dùng animation CSS giả. Chỉ bài đang phát mới hiển thị. */
+  .playlist-playing{
+    display:flex; align-items:flex-end; justify-content:center; gap:2px;
+    width:15px; height:14px; margin-right:2px;
+    opacity:0; color:var(--music-accent);
+  }
+  .playlist-item.active .playlist-playing{ opacity:1; }
+  .playlist-playing i{
+    display:block; width:2.5px; height:3px; min-height:3px;
+    border-radius:3px; background:linear-gradient(180deg,var(--music-accent),rgba(201,183,157,.72));
+    box-shadow:0 0 7px rgba(143,214,176,.18);
+    transform-origin:bottom;
+    transition:height .07s linear, opacity .1s ease;
+  }
+  .playlist-playing i:nth-child(2){ opacity:.88; }
+  .playlist-playing i:nth-child(3){ opacity:.7; }
+  .playlist-item:not(.active) .playlist-playing i{ height:3px !important; }
+  .playlist-item:not(.active) .playlist-playing{ opacity:0; }
+
+  @media (max-width:560px){
+    .player{ padding:12px; border-radius:16px; }
+    .player-bottom{ gap:6px; }
+    .player-controls{ gap:11px; }
+    .volume-wrap{ min-width:56px; }
+    .volume-range{ width:34px; }
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .playlist-playing i{ animation:none !important; }
+  }
+
+  footer{ margin-top: 40px; font-size: 12px; color: var(--text-faint); font-weight: 600; }
+
+  .weather{
+    position: fixed; right: clamp(24px, 5vw, 64px); bottom: 40px; z-index: 3;
+    display:flex; align-items:center; gap: 12px;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    padding: 12px 18px; border-radius: var(--radius-sm);
+  }
+  .weather-pin{ width:30px; height:30px; border-radius:50%; background: rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .weather-pin svg{ width:14px; height:14px; }
+  .weather-loc{ font-size: 12.5px; font-weight:700; }
+  .weather-sub{ font-size: 11px; color: var(--text-dim); margin-top:1px; }
+  .weather-temp{ display:flex; align-items:center; gap:6px; margin-left: 6px; font-size: 13px; font-weight:700; white-space:nowrap; }
+  .weather-temp svg{ width:15px; height:15px; opacity:.8; }
+
+  @media (max-width: 900px){
+    .links{ grid-template-columns: repeat(2,1fr); }
+    .weather{ position: static; margin-top: 24px; width: fit-content; }
+  }
+  @media (max-width: 560px){
+    .page{ padding: 24px 18px; }
+    .identity{ flex-direction:column; align-items:flex-start; gap:14px; }
+    .id-text h1{ font-size: 28px; }
+    .content{ padding-top: 32px; gap: 18px; }
+    .activity-line, .activity-detail{ max-width: 280px; }
+  }
+  @media (prefers-reduced-motion: reduce){ .link-card{ transition:none; } }
+
+  /* ===== PERFORMANCE SAFE OVERRIDES ===== */
+  /* Keep the original video, bg-overlay and scrim-left. Disable only unused FX. */
+  .bg-media{ will-change:auto; transform:translateZ(0); }
+  .bg-light, .bg-fog, .grain, .spotlight{ display:none !important; }
+  .scrim-left{ display:block !important; }
+  .bg-overlay{ pointer-events:none; }
 </style>
 </head>
 <body>
-<div id="app"></div>
-<div id="hint">Hiệu ứng giọt nước làm méo texture theo thời gian</div>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-  }
-}
-</script>
+  <div class="bg" id="bg">
+    <video class="bg-media" id="bgVideo" aria-hidden="true" playsinline autoplay muted loop></video>
+  <canvas class="bg-light" id="bgLight" aria-hidden="true"></canvas>
+    <div class="bg-fog" id="bgFog"></div>
+    <div class="bg-overlay" id="bgOverlay"></div>
+  </div>
+  <div class="grain"></div>
+  <div class="scrim-left"></div>
 
-<script type="module">
-import * as THREE from 'three';
+  <div class="page">
+    <nav id="nav" class="reveal"></nav>
 
-const rainVertShader = `
-varying vec2 uvInterpolator;
+    <div class="content">
+      <div class="status reveal" id="status"></div>
+      <div class="identity reveal" id="identity"></div>
+      <p class="bio-text reveal" id="bioText"></p>
+      <div class="tags reveal" id="tags"></div>
+      <div class="links reveal" id="links"></div>
+      <div class="player reveal" id="player"></div>
+    </div>
 
-void main() {
-  uvInterpolator = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
+    <footer id="footer"></footer>
+  </div>
 
-const rainFragShader = `
-varying vec2 uvInterpolator;
-uniform float u_time;
-uniform sampler2D u_texture;
+  <div class="weather reveal" id="weather"></div>
 
-float Random11(float inputValue, float seed) {
-  return fract(sin(inputValue * 345.456) * seed);
-}
+<script>
+const BIO_CONFIG = {
 
-float Random21(vec2 inputValue, float seed) {
-  return fract(sin(dot(inputValue, vec2(123.456, 43.12))) * seed);
-}
+  nav: [
+    { label: "HOME", href: "#", active: true },
+  ],
 
-vec2 Drops(vec2 uv, float seed) {
-  float shiftY = Random11(0.5, seed);
-  uv.y += shiftY;
+  clock: { enabled: true, format24h: true },
 
-  float cellsResolution = 10.0;
-  uv *= cellsResolution;
-
-  float rowIndex = floor(uv.y);
-  float shiftX = Random11(rowIndex, seed);
-  uv.x += shiftX;
-
-  vec2 cellIndex = floor(uv);
-  vec2 cellUv = fract(uv);
-
-  vec2 cellCenter = vec2(0.5);
-  float distanceFromCenter = distance(cellUv, cellCenter);
-
-  float isDropShown = step(0.8, Random21(cellIndex, seed + 14244.324));
-
-  float dropIntensity = 1.0 - fract(u_time * 0.1 + Random21(cellIndex, seed + 32132.432) * 2.0) * 2.0;
-  dropIntensity = sign(dropIntensity) * abs(dropIntensity * dropIntensity * dropIntensity * dropIntensity);
-  dropIntensity = clamp(dropIntensity, 0.0, 1.0);
-
-  float isInsideDrop = 1.0 - step(0.1, distanceFromCenter);
-
-  vec2 vecToCenter = normalize(cellCenter - cellUv);
-
-  vec2 dropValue = vecToCenter * distanceFromCenter * distanceFromCenter * 40.0;
-
-  vec2 drop = dropValue * isInsideDrop * isDropShown * dropIntensity;
-  return drop;
-}
-
-void main() {
-  vec2 uv = uvInterpolator;
-
-  vec2 drops = vec2(0.0);
-  for(int i = 0; i < 10; i++) {
-    drops += Drops(uv, 42424.43 + float(i) * 12313.432);
-  }
-
-  uv += drops;
-
-  vec4 color = texture2D(u_texture, uv);
-
-  gl_FragColor = color;
-}
-`;
-
-async function main() {
-  const app = document.querySelector('#app');
-
-  const scene = new THREE.Scene();
-
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.z = 7;
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  app.appendChild(renderer.domElement);
-
-  // Ảnh nền ví dụ (bạn có thể thay bằng ảnh của riêng bạn)
-  const imageUrl = 'https://picsum.photos/id/29/1200/1600';
-
-  const textureLoader = new THREE.TextureLoader();
-  textureLoader.crossOrigin = 'anonymous';
-  const texture = await textureLoader.loadAsync(imageUrl);
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-
-  const aspectRatio = texture.image.height / texture.image.width;
-  const planeHeight = 10;
-  const planeWidth = planeHeight / aspectRatio;
-
-  const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 1, 1);
-
-  const material = new THREE.ShaderMaterial({
-    vertexShader: rainVertShader,
-    fragmentShader: rainFragShader,
-    uniforms: {
-      u_time: { value: 0 },
-      u_texture: { value: texture },
+  /* ---- BACKGROUND ----
+     type: "video" | "image" | "gradient"
+     source: tên file / URL, ví dụ "bg.mp4" hoặc "bg.jpg"
+  */
+  background: {
+    enabled: true,
+    type: "video",
+    source: "bg1.mp4",
+    position: "center center",
+    size: "cover",
+    overlay: {
+      enabled: true,
+      color: "rgba(115, 120, 125, 0.93)"
     },
-  });
-  const plane = new THREE.Mesh(geometry, material);
-  scene.add(plane);
+    lightMask: {
+      enabled: false,
+      threshold: 0.48,
+      softness: 0.20,
+      strength: 1.00,
+      coreThreshold: 0.70,
+      coreStrength: 0.72,
+      chroma: 1.15,
+      blur: 14,
+      opacity: 0.84
+    },
+    fog: {
+      enabled: false,
+      blur: 2,
+      opacity: 0.10,
+      color: "rgba(215, 220, 225, 0.22)"
+    }
+  },
 
-  function onResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
-  window.addEventListener('resize', onResize);
+  profile: {
+    status: "Online",
+    name: "khanz",
+    handle: "@itsrealkhanz",
+    bio: "Just a guy who loves creating, exploring new things and enjoying the little moments.",
+    avatar: {
+      image: null,                       // ví dụ: "https://example.com/avatar.jpg"
+      fallbackText: "AVATAR\n(thay sau)" // hiện khi chưa có image
+    },
+    tags: ["Developer", "Designer", "Gamer"]
+  },
 
-  function animationFrame(time) {
-    material.uniforms.u_time.value = time / 1000;
-    renderer.render(scene, camera);
-    requestAnimationFrame(animationFrame);
+  socials: [
+    { key: "discord", name: "Discord", url: null },
+    { key: "roblox",  name: "Roblox",  url: null },
+    { key: "youtube", name: "YouTube", url: null },
+    { key: "github",  name: "GitHub",  url: null },
+    // Sau này chỉ cần điền URL, ví dụ: url: "https://..."
+  ],
+
+  /* ---- NHẠC — gọn còn 3 trường mỗi bài, thêm bao nhiêu bài tuỳ thích ----
+     title: "Tên bài hát - Ca sĩ"   (trình phát tự tách ra 2 dòng)
+     cover: URL ảnh bìa hoặc tên file, ví dụ "cover.jpg"  (để null nếu chưa có)
+     music: URL file nhạc hoặc tên file, ví dụ "song.mp3" / "song.mp4"
+            — đây là file phát thật, không phải giả lập; thời lượng và
+            thanh tiến trình tự lấy từ chính file này.                     */
+  music: {
+    startIndex: 0,      // bài phát mặc định khi mở trang (index trong mảng tracks)
+    autoAdvance: true,  // hết bài thì tự chuyển bài kế
+    tracks: [
+      { title: "Id Thang Máy" , cover: "https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02c138ef03555390be900f338e", music: "https://raw.githubusercontent.com/Kazuuiie/music/main/id%20thang%20m%C3%A1y%20(feat.%20267).mp3" },
+      // thêm bài khác, ví dụ:
+      // { title: "Kill Bill - SZA", cover: "https://.../kill-bill.jpg", music: "https://.../kill-bill.mp3" },
+      // { title: "Snooze - SZA",    cover: "snooze.jpg",                 music: "snooze.mp4" },
+    ]
+  },
+
+  /* ---- DISCORD — avatar + trạng thái "Online" tự cập nhật theo Discord thật ----
+     Dùng dịch vụ miễn phí Lanyard (không cần token bot riêng).
+     Cách lấy userId: bật Developer Mode trong Discord (Cài đặt > Nâng cao),
+     bấm chuột phải vào avatar của bạn > "Copy User ID".
+     LƯU Ý BẮT BUỘC: tài khoản Discord của bạn phải tham gia server Lanyard
+     tại https://discord.gg/lanyard thì hệ thống mới đọc được trạng thái. */
+  discord: {
+    enabled: true,                // đã bật — dùng ID bạn cung cấp
+    userId: "1473247060298961040",
+    useAvatar: true,          // avatar tự lấy từ Discord
+    useAvatarDecoration: true,// hiện khung trang trí (Nitro decoration) nếu có đang trang bị
+    useIdentity: true,        // tên hiển thị (h1) + @handle tự lấy theo Discord (global name + username)
+    useActivity: true,        // hiện badge "Đang chơi / Đang nghe / Đang xem" — bấm để xem chi tiết
+    useStatus: true,          // chữ Online/Idle/... + viền màu trạng thái tự đổi theo Discord
+    pollIntervalMs: 20000     // tần suất kiểm tra lại (mili giây)
+  },
+
+  /* ---- THỜI TIẾT THỰC TẾ ---- */
+  weather: {
+    useGeolocation: false,  // false = không xin quyền vị trí, luôn dùng toạ độ cố định bên dưới
+    fallback: { location: "Vĩnh Long, Việt Nam", lat: 10.2537, lon: 105.9722 }
+  },
+
+  footer: { text: "© 2025 khanz. All rights reserved." }
+};
+/* ========================= HẾT PHẦN CONFIG ============================= */
+
+
+/* ---------------------------- ICON LIBRARY ------------------------------ */
+const ICONS = {
+  clock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>`,
+  arrow: `<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 17 17 7M7 7h10v10"/></svg>`,
+  chevron: `<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`,
+  pin: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.5"/></svg>`,
+  cloud: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 1 0-1.41-8.775A6 6 0 0 0 5 12.5 4 4 0 0 0 6 20h11.5"/></svg>`,
+  sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>`,
+  rain: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 16a4.5 4.5 0 1 0-1.41-8.775A6 6 0 0 0 5 9.5 4 4 0 0 0 6 17.5h11.5"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/></svg>`,
+  spotify: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2Zm4.586 14.424a.622.622 0 0 1-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.623.623 0 1 1-.277-1.215c3.809-.87 7.077-.496 9.712 1.115a.623.623 0 0 1 .207.857Zm1.223-2.722a.78.78 0 0 1-1.072.257c-2.688-1.652-6.786-2.131-9.966-1.166a.78.78 0 1 1-.454-1.494c3.63-1.102 8.147-.568 11.235 1.332a.78.78 0 0 1 .257 1.071Zm.105-2.835C14.692 9.03 9.375 8.854 6.297 9.798a.936.936 0 1 1-.545-1.79c3.533-1.073 9.402-.865 13.115 1.338a.936.936 0 0 1-.953 1.612Z"/></svg>`,
+  list: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>`,
+  prev: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 9 6V6z"/></svg>`,
+  next: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg>`,
+  play: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`,
+  pause: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`,
+  shuffle: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h3c5 0 7 12 12 12h3"/><path d="m18 15 3 3-3 3"/><path d="M3 18h3c1.6 0 2.8-.7 3.8-1.8"/><path d="M14.2 7.8C15.2 6.7 16.5 6 18 6h3"/><path d="m18 3 3 3-3 3"/></svg>`,
+  repeat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>`,
+  volume: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a9 9 0 0 1 0 12"/></svg>`,
+  mute: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m17 9 4 4m0-4-4 4"/></svg>`,
+  /* Icon cho badge activity: game (controller), music_activity (nốt nhạc,
+     dùng khi đang nghe Spotify), eye (đang xem), stream (đang stream). */
+  game: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4M15.5 13h.01M18 10.5h.01M17.32 8H6.68a4 4 0 0 0-3.978 4.393l.404 4.06A2.5 2.5 0 0 0 5.59 18.7c.605 0 1.183-.24 1.61-.668L9 16.25a2 2 0 0 1 1.414-.586h3.172a2 2 0 0 1 1.414.586l1.8 1.782a2.28 2.28 0 0 0 1.61.668 2.5 2.5 0 0 0 2.485-2.247l.404-4.06A4 4 0 0 0 17.32 8Z"/></svg>`,
+  music_activity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
+  eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  stream: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="10" rx="2"/><path d="M22 8.5v7L16 13z"/></svg>`,
+  social: {
+    discord: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.369A19.79 19.79 0 0 0 15.885 3a13.6 13.6 0 0 0-.617 1.25 18.27 18.27 0 0 0-5.536 0A13.6 13.6 0 0 0 9.115 3a19.74 19.74 0 0 0-4.435 1.372C1.933 8.52 1.203 12.573 1.568 16.57a19.9 19.9 0 0 0 5.993 3.03 14.6 14.6 0 0 0 1.283-2.084 12.9 12.9 0 0 1-2.02-.968c.17-.123.336-.252.497-.384a14.24 14.24 0 0 0 12.15 0c.163.132.328.26.497.384-.638.377-1.32.699-2.02.968.372.73.8 1.424 1.283 2.084a19.86 19.86 0 0 0 5.994-3.03c.43-4.63-.734-8.647-3.908-12.201ZM8.02 14.243c-1.183 0-2.157-1.084-2.157-2.418 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.947 2.418-2.157 2.418Zm7.96 0c-1.183 0-2.157-1.084-2.157-2.418 0-1.333.955-2.418 2.157-2.418 1.21 0 2.175 1.094 2.157 2.418 0 1.334-.938 2.418-2.157 2.418Z"/></svg>`,
+    github: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.014c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.483 0-.238-.009-.868-.014-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.622.069-.61.069-.61 1.004.071 1.532 1.032 1.532 1.032.892 1.53 2.341 1.088 2.91.833.091-.647.35-1.089.636-1.339-2.221-.253-4.556-1.113-4.556-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.269 2.75 1.026A9.6 9.6 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.747-1.026 2.747-1.026.546 1.378.203 2.397.1 2.65.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.31.679.921.679 1.856 0 1.339-.012 2.419-.012 2.749 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.014C22 6.484 17.522 2 12 2Z"/></svg>`,
+    youtube: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.02 3.02 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.02 3.02 0 0 0 .502 6.186 31.6 31.6 0 0 0 0 12a31.6 31.6 0 0 0 .502 5.814 3.02 3.02 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.02 3.02 0 0 0 2.122-2.136A31.6 31.6 0 0 0 24 12a31.6 31.6 0 0 0-.502-5.814ZM9.545 15.568V8.432L15.818 12l-6.273 3.568Z"/></svg>`,
+    x: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231ZM17.083 19.77h1.833L7.084 4.126H5.117Z"/></svg>`,
+    roblox: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m6.21 2.5 13.29 4.64-4.71 14.36-13.29-4.64L6.21 2.5Zm1.9 6.21-1.36 4.16 4.05 1.42 1.36-4.16-4.05-1.42Z"/></svg>`,
   }
-  requestAnimationFrame(animationFrame);
+};
+
+/* ------------------------------ HELPERS ---------------------------------- */
+const $ = (sel) => document.querySelector(sel);
+const fmtTime = (s) => {
+  if (!isFinite(s) || s < 0) s = 0;
+  return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+};
+
+// Tách "Tên bài - Ca sĩ" thành 2 phần để hiển thị 2 dòng như player cũ.
+// Nếu không có " - " thì coi cả chuỗi là tên bài, ca sĩ để trống.
+function parseTrackTitle(raw){
+  const idx = raw.indexOf(' - ');
+  if (idx === -1) return { songTitle: raw, artist: '' };
+  return { songTitle: raw.slice(0, idx), artist: raw.slice(idx + 3) };
 }
 
-main();
+/* ------------------------------ RENDER NAV -------------------------------- */
+function renderNav(){
+  const { nav, clock } = BIO_CONFIG;
+  const navEl = $('#nav');
+  navEl.innerHTML = nav.map(item =>
+    `<a href="${item.href}" class="${item.active ? 'active' : ''}">${item.label}</a>`
+  ).join('');
+
+  if (clock.enabled){
+    const pill = document.createElement('div');
+    pill.className = 'clock-pill';
+    pill.innerHTML = `${ICONS.clock}<span id="clock">--:--</span>`;
+    navEl.appendChild(pill);
+    const updateClock = () => {
+      const now = new Date();
+      let h = now.getHours();
+      const m = String(now.getMinutes()).padStart(2,'0');
+      if (!clock.format24h){ h = ((h+11)%12)+1; }
+      $('#clock').textContent = `${String(h).padStart(2,'0')}:${m}`;
+    };
+    updateClock();
+    setInterval(updateClock, 30000);
+  }
+}
+
+/* ---------------------------- RENDER PROFILE ------------------------------ */
+function renderProfile(){
+  const { profile } = BIO_CONFIG;
+
+  $('#status').innerHTML = `<span class="dot"></span><span>${profile.status}</span>`;
+
+  const avatarStyle = profile.avatar.image
+    ? `style="background-image:url('${profile.avatar.image}')"`
+    : '';
+  const avatarContent = profile.avatar.image ? '' : profile.avatar.fallbackText;
+
+  $('#identity').innerHTML = `
+    <div class="avatar-wrap">
+      <div class="avatar" ${avatarStyle}>${avatarContent}</div>
+      <div class="avatar-deco" id="avatarDeco"></div>
+    </div>
+    <div class="id-text">
+      <h1>${profile.name}</h1>
+      <div class="handle">${profile.handle}</div>
+      <div class="activity-wrap">
+        <div class="activity-line" id="discordActivity"></div>
+        <div class="activity-detail" id="activityDetail"></div>
+      </div>
+    </div>
+  `;
+
+  $('#bioText').textContent = profile.bio;
+  $('#tags').innerHTML = profile.tags.map(t => `<span class="tag">${t}</span>`).join('');
+}
+
+/* ---------------------------- RENDER SOCIALS ------------------------------ */
+function renderSocials(){
+  const { socials } = BIO_CONFIG;
+  $('#links').innerHTML = socials.map(s => {
+    const icon = ICONS.social[s.key] || '';
+    const arrow = ICONS.arrow;
+    if (s.url) {
+      return `
+        <a class="link-card" href="${s.url}" rel="noopener" data-social="${s.key}">
+          <div class="top">${icon}${arrow}</div>
+          <span class="label">${s.name}</span>
+        </a>`;
+    }
+    return `
+      <button class="link-card" type="button" data-social="${s.key}" aria-label="${s.name}">
+        <span class="top">${icon}${arrow}</span>
+        <span class="label">${s.name}</span>
+      </button>`;
+  }).join('');
+
+  $('#links').querySelectorAll('.link-card[data-social]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const item = BIO_CONFIG.socials.find(x => x.key === el.dataset.social);
+      if (!item?.url) e.preventDefault();
+    });
+  });
+}
+
+/* ------------------------------ RENDER FOOTER ------------------------------ */
+function renderFooter(){
+  $('#footer').textContent = BIO_CONFIG.footer.text;
+}
+
+/* ------------------------------- MUSIC PLAYER ------------------------------ */
+/* Phát nhạc THẬT qua thẻ <audio> ẩn (đọc được cả .mp3 và file âm thanh
+   trong .mp4) — không còn đếm giờ giả lập. Thời lượng bài hát tự lấy từ
+   chính file nhạc khi tải xong metadata. */
+const Player = {
+  tracks: BIO_CONFIG.music.tracks.map(t => ({
+    ...parseTrackTitle(t.title),
+    cover: t.cover || null,
+    music: t.music
+  })),
+  index: Math.max(0, Math.min(BIO_CONFIG.music.startIndex || 0, BIO_CONFIG.music.tracks.length - 1)),
+  playing: false,
+  audio: null,
+  durations: {},
+  listOpen: false,
+  shuffle: false,
+  repeat: 'all', // off | all | one
+  volume: 0.86,
+  lastVolume: 0.86,
+  audioCtx: null,
+  analyser: null,
+  analyserData: null,
+  vizFrame: 0,
+
+  currentTrack(){ return this.tracks[this.index]; },
+
+  mount(){
+    const el = $('#player');
+    el.innerHTML = `
+      <audio id="pAudio" preload="metadata"></audio>
+
+      <div class="player-top">
+        <div class="player-art-wrap">
+          <div class="player-art" id="pArt"></div>
+        </div>
+
+        <div class="player-info">
+          <div class="player-listening"><span class="dot"></span><span id="pStatusText">Ready to play</span></div>
+          <div class="player-title" id="pTitle"></div>
+          <div class="player-artist" id="pArtist"></div>
+        </div>
+
+        <div class="player-actions">
+          <button class="icon-btn" id="pListBtn" aria-label="Danh sách bài hát" title="Playlist">${ICONS.list}</button>
+        </div>
+      </div>
+
+      <div class="progress-row">
+        <span id="pElapsed">0:00</span>
+        <div class="progress-track" id="pTrack" role="slider" tabindex="0" aria-label="Tiến trình bài hát">
+          <div class="progress-fill" id="pFill"><span class="progress-thumb"></span></div>
+        </div>
+        <span id="pDuration">0:00</span>
+      </div>
+
+      <div class="player-bottom">
+        <div class="player-controls">
+          <button class="control-btn" id="pShuffle" aria-label="Shuffle" title="Shuffle">${ICONS.shuffle}</button>
+          <button id="pPrev" aria-label="Previous" title="Previous">${ICONS.prev}</button>
+          <button class="play-btn" id="pPlay" aria-label="Play/Pause" title="Play / Pause">${ICONS.play}</button>
+          <button id="pNext" aria-label="Next" title="Next">${ICONS.next}</button>
+          <button class="control-btn active" id="pRepeat" aria-label="Repeat" title="Repeat all">${ICONS.repeat}</button>
+        </div>
+
+        <div class="volume-wrap">
+          <button class="icon-btn volume-btn" id="pMute" aria-label="Mute" title="Mute">${ICONS.volume}</button>
+          <input class="volume-range" id="pVolume" type="range" min="0" max="1" step="0.01" value="${this.volume}" aria-label="Âm lượng">
+        </div>
+      </div>
+
+      <div class="playlist-panel" id="pList"></div>
+    `;
+
+    this.audio = $('#pAudio');
+    this.audio.volume = this.volume;
+    // Bắt buộc phải đặt crossOrigin TRƯỚC khi gán src và TRƯỚC khi nối vào
+    // Web Audio (setupVisualizer). Nếu bỏ qua bước này, khi phát nhạc từ
+    // một domain khác (vd. GitHub raw) trình duyệt sẽ CÂM TIẾNG hoàn toàn
+    // ngay khi audio được nối qua AnalyserNode — không báo lỗi gì cả, chỉ
+    // đơn giản là không có âm thanh phát ra. Đây là nguyên nhân nhạc "bị lỗi".
+    this.audio.crossOrigin = 'anonymous';
+    this.setupVisualizer();
+
+    this.audio.addEventListener('loadedmetadata', () => {
+      this.durations[this.index] = this.audio.duration;
+      $('#pDuration').textContent = fmtTime(this.audio.duration);
+      this.renderList();
+    });
+
+    this.audio.addEventListener('timeupdate', () => {
+      $('#pElapsed').textContent = fmtTime(this.audio.currentTime);
+      this.updateFill();
+    });
+
+    this.audio.addEventListener('play', () => this.setPlayingState(true));
+    this.audio.addEventListener('pause', () => this.setPlayingState(false));
+
+    this.audio.addEventListener('ended', () => {
+      if (this.repeat === 'one'){
+        this.audio.currentTime = 0;
+        this.play();
+        return;
+      }
+      if (this.shuffle && this.tracks.length > 1){
+        this.next(true);
+        return;
+      }
+      if (this.index < this.tracks.length - 1 || this.repeat === 'all'){
+        this.next(true);
+      } else {
+        this.pause();
+        this.audio.currentTime = 0;
+        this.updateFill();
+      }
+    });
+
+    this.audio.addEventListener('error', () => {
+      // Nếu server của file nhạc không hỗ trợ CORS, gán crossOrigin sẽ khiến
+      // trình duyệt chặn hẳn việc tải file (lỗi). Trường hợp đó, thử lại
+      // đúng 1 lần mà không có crossOrigin — nhạc vẫn phát bình thường,
+      // chỉ mất phần visualizer thật (playlist bars) cho bài đó.
+      if (this.audio.crossOrigin && !this.audio.dataset.corsRetried){
+        this.audio.dataset.corsRetried = '1';
+        this.audio.removeAttribute('crossorigin');
+        this.audio.crossOrigin = null;
+        this.audio.load();
+        this.play();
+        return;
+      }
+      const status = $('#pStatusText');
+      if (status) status.textContent = 'Unable to load track';
+      $('#player').classList.remove('is-playing');
+    });
+
+    $('#pPrev').addEventListener('click', () => this.prev());
+    $('#pNext').addEventListener('click', () => this.next());
+    $('#pPlay').addEventListener('click', () => this.toggle());
+    $('#pShuffle').addEventListener('click', () => this.toggleShuffle());
+    $('#pRepeat').addEventListener('click', () => this.cycleRepeat());
+    $('#pTrack').addEventListener('click', (e) => this.seek(e));
+    $('#pTrack').addEventListener('keydown', (e) => this.seekKeyboard(e));
+    $('#pListBtn').addEventListener('click', () => this.toggleList());
+    $('#pMute').addEventListener('click', () => this.toggleMute());
+    $('#pVolume').addEventListener('input', (e) => this.setVolume(Number(e.target.value)));
+
+    this.loadTrack(this.index, false);
+    this.renderList();
+    this.preloadDurations();
+    this.syncControlUI();
+  },
+
+  setupVisualizer(){
+    if (this.audioCtx || !this.audio) return;
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      this.audioCtx = new AudioCtx();
+      this.analyser = this.audioCtx.createAnalyser();
+      this.analyser.fftSize = 128;
+      this.analyser.smoothingTimeConstant = 0.78;
+      this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
+
+      const source = this.audioCtx.createMediaElementSource(this.audio);
+      source.connect(this.analyser);
+      this.analyser.connect(this.audioCtx.destination);
+    }catch(err){
+      /* Nguồn cross-origin không cho phép phân tích: vẫn phát nhạc bình thường. */
+      this.audioCtx = null;
+      this.analyser = null;
+      this.analyserData = null;
+    }
+  },
+
+  updatePlaylistVisualizer(){
+    if (!this.analyser || !this.analyserData || !this.playing){
+      this.stopPlaylistVisualizer(true);
+      return;
+    }
+
+    this.analyser.getByteFrequencyData(this.analyserData);
+
+    const item = document.querySelector(`.playlist-item[data-index="${this.index}"]`);
+    if (!item) return;
+
+    const bars = item.querySelectorAll('.playlist-playing i');
+    const n = bars.length;
+    const bins = this.analyserData.length;
+
+    for(let i = 0; i < n; i++){
+      const start = Math.floor((i / n) * bins * 0.55);
+      const end = Math.max(start + 1, Math.floor(((i + 1) / n) * bins * 0.55));
+      let sum = 0;
+      for(let j = start; j < end; j++) sum += this.analyserData[j];
+      const avg = sum / (end - start);
+
+      /* Nén biên độ để visualizer nhỏ nhưng vẫn bắt được beat/bass. */
+      const level = Math.min(1, Math.pow(avg / 255, 0.72) * 1.18);
+      const height = 3 + Math.round(level * 11);
+
+      bars[i].style.height = `${height}px`;
+      bars[i].style.opacity = `${0.62 + level * 0.38}`;
+    }
+
+    this.vizFrame = requestAnimationFrame(() => this.updatePlaylistVisualizer());
+  },
+
+  startPlaylistVisualizer(){
+    if (this.vizFrame) cancelAnimationFrame(this.vizFrame);
+    this.updatePlaylistVisualizer();
+  },
+
+  stopPlaylistVisualizer(clear = false){
+    if (this.vizFrame){
+      cancelAnimationFrame(this.vizFrame);
+      this.vizFrame = 0;
+    }
+
+    const bars = document.querySelectorAll('.playlist-playing i');
+    bars.forEach(bar => {
+      bar.style.height = '3px';
+      if (clear) bar.style.opacity = '';
+    });
+  },
+
+  setPlayingState(isPlaying){
+    this.playing = isPlaying;
+    $('#player')?.classList.toggle('is-playing', isPlaying);
+    $('#pPlay').innerHTML = isPlaying ? ICONS.pause : ICONS.play;
+    $('#pPlay').setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
+    const status = $('#pStatusText');
+    if (status) status.textContent = isPlaying ? 'Now playing' : 'Paused';
+    this.renderList();
+
+    if (isPlaying){
+      if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume().catch(()=>{});
+      this.startPlaylistVisualizer();
+    }else{
+      this.stopPlaylistVisualizer();
+    }
+  },
+
+  loadTrack(i, autoplay){
+    if (!this.tracks.length) return;
+    this.index = (i + this.tracks.length) % this.tracks.length;
+    const t = this.currentTrack();
+    if (!t) return;
+
+    this.audio.pause();
+    delete this.audio.dataset.corsRetried;
+    this.audio.crossOrigin = 'anonymous';
+    this.audio.src = t.music || '';
+    this.audio.load();
+
+    $('#pTitle').textContent = t.songTitle;
+    $('#pArtist').textContent = t.artist || 'Unknown artist';
+    $('#pArt').style.backgroundImage = t.cover ? `url('${t.cover}')` : '';
+    $('#pElapsed').textContent = '0:00';
+    $('#pDuration').textContent = this.durations[this.index] ? fmtTime(this.durations[this.index]) : '0:00';
+    $('#pFill').style.width = '0%';
+
+    if (autoplay) this.play();
+    this.renderList();
+  },
+
+  renderList(){
+    const list = $('#pList');
+    if (!list) return;
+
+    list.innerHTML = this.tracks.map((t, i) => `
+      <div class="playlist-item ${i === this.index ? 'active' : ''}" data-index="${i}">
+        <div class="playlist-thumb" style="${t.cover ? `background-image:url('${t.cover}')` : ''}"></div>
+        <div class="playlist-meta">
+          <span class="pi-name"><b>${t.songTitle}</b></span>
+          <span class="pi-artist">${t.artist || 'Unknown artist'}</span>
+        </div>
+        <div class="playlist-playing" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <span class="pi-dur">${this.durations[i] ? fmtTime(this.durations[i]) : '--:--'}</span>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.playlist-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const i = Number(item.dataset.index);
+        if (i === this.index){
+          this.toggle();
+          return;
+        }
+        this.loadTrack(i, true);
+      });
+    });
+  },
+
+  toggleList(){
+    this.listOpen = !this.listOpen;
+    $('#pList').classList.toggle('open', this.listOpen);
+    $('#pListBtn').classList.toggle('list-open', this.listOpen);
+  },
+
+  updateFill(){
+    const dur = this.audio.duration || this.durations[this.index] || 0;
+    const pct = dur ? Math.min(100, (this.audio.currentTime / dur) * 100) : 0;
+    $('#pFill').style.width = pct + '%';
+    $('#pTrack').setAttribute('aria-valuenow', Math.round(pct));
+  },
+
+  toggle(){ this.playing ? this.pause() : this.play(); },
+
+  play(){
+    if (!this.audio || !this.audio.src) return;
+    this.setupVisualizer();
+    if (this.audioCtx && this.audioCtx.state === 'suspended'){
+      this.audioCtx.resume().catch(()=>{});
+    }
+    const p = this.audio.play();
+    if (p && p.catch){
+      p.catch(() => {
+        const status = $('#pStatusText');
+        if (status) status.textContent = 'Click play to start';
+      });
+    }
+  },
+
+  pause(){ if (this.audio) this.audio.pause(); },
+
+  next(forcePlay = this.playing){
+    if (!this.tracks.length) return;
+    let nextIndex;
+    if (this.shuffle && this.tracks.length > 1){
+      do {
+        nextIndex = Math.floor(Math.random() * this.tracks.length);
+      } while (nextIndex === this.index);
+    } else {
+      nextIndex = (this.index + 1) % this.tracks.length;
+    }
+    this.loadTrack(nextIndex, forcePlay);
+  },
+
+  prev(){
+    if (!this.tracks.length) return;
+    if (this.audio && this.audio.currentTime > 3){
+      this.audio.currentTime = 0;
+      this.updateFill();
+      return;
+    }
+    this.loadTrack((this.index - 1 + this.tracks.length) % this.tracks.length, this.playing);
+  },
+
+  seek(e){
+    const track = $('#pTrack');
+    const rect = track.getBoundingClientRect();
+    const clientX = e.clientX ?? (e.touches && e.touches[0]?.clientX);
+    if (clientX == null) return;
+    const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    const dur = this.audio.duration || this.durations[this.index] || 0;
+    if (dur) this.audio.currentTime = pct * dur;
+    this.updateFill();
+  },
+
+  seekKeyboard(e){
+    const dur = this.audio.duration || this.durations[this.index] || 0;
+    if (!dur) return;
+    const step = Math.max(5, dur / 100);
+    if (e.key === 'ArrowRight'){ e.preventDefault(); this.audio.currentTime = Math.min(dur, this.audio.currentTime + step); }
+    if (e.key === 'ArrowLeft'){ e.preventDefault(); this.audio.currentTime = Math.max(0, this.audio.currentTime - step); }
+    if (e.key === 'Home'){ e.preventDefault(); this.audio.currentTime = 0; }
+    if (e.key === 'End'){ e.preventDefault(); this.audio.currentTime = dur; }
+    this.updateFill();
+  },
+
+  toggleShuffle(){
+    this.shuffle = !this.shuffle;
+    $('#pShuffle').classList.toggle('active', this.shuffle);
+    $('#pShuffle').title = this.shuffle ? 'Shuffle on' : 'Shuffle off';
+  },
+
+  cycleRepeat(){
+    this.repeat = this.repeat === 'all' ? 'one' : this.repeat === 'one' ? 'off' : 'all';
+    const btn = $('#pRepeat');
+    btn.classList.toggle('active', this.repeat !== 'off');
+    btn.title = this.repeat === 'one' ? 'Repeat one' : this.repeat === 'all' ? 'Repeat all' : 'Repeat off';
+    btn.setAttribute('aria-label', btn.title);
+    btn.dataset.mode = this.repeat;
+  },
+
+  setVolume(value){
+    this.volume = Math.min(1, Math.max(0, value));
+    this.audio.volume = this.volume;
+    if (this.volume > 0) this.lastVolume = this.volume;
+    this.updateVolumeUI();
+  },
+
+  toggleMute(){
+    if (this.audio.volume > 0){
+      this.lastVolume = this.audio.volume;
+      this.audio.volume = 0;
+      this.volume = 0;
+    } else {
+      this.volume = this.lastVolume || 0.8;
+      this.audio.volume = this.volume;
+    }
+    this.updateVolumeUI();
+  },
+
+  updateVolumeUI(){
+    const range = $('#pVolume');
+    if (range) range.value = this.audio.volume;
+    const btn = $('#pMute');
+    if (!btn) return;
+    btn.innerHTML = this.audio.volume === 0 ? ICONS.mute : ICONS.volume;
+    btn.setAttribute('aria-label', this.audio.volume === 0 ? 'Unmute' : 'Mute');
+    btn.title = this.audio.volume === 0 ? 'Unmute' : 'Mute';
+  },
+
+  syncControlUI(){
+    $('#pShuffle').classList.toggle('active', this.shuffle);
+    $('#pRepeat').classList.toggle('active', this.repeat !== 'off');
+    $('#pRepeat').dataset.mode = this.repeat;
+    this.updateVolumeUI();
+  },
+
+  preloadDurations(){
+    this.tracks.forEach((t, i) => {
+      if (i === this.index || this.durations[i] || !t.music) return;
+      const probe = new Audio();
+      probe.preload = 'metadata';
+      probe.src = t.music;
+      probe.addEventListener('loadedmetadata', () => {
+        this.durations[i] = probe.duration;
+        this.renderList();
+      });
+      probe.addEventListener('error', () => {});
+    });
+  }
+};
+
+/* ------------------------------- WEATHER (API THẬT) ------------------------------ */
+/* Dùng Open-Meteo (miễn phí, không cần API key, cho phép gọi trực tiếp từ trình duyệt).
+   Docs: https://open-meteo.com/                                                     */
+const Weather = {
+
+  // Mã thời tiết WMO -> icon + nhãn tiếng Việt (rút gọn các mã phổ biến)
+  codeMap(code){
+    if (code === 0) return { icon: ICONS.sun, label: 'Trời quang' };
+    if ([1,2].includes(code)) return { icon: ICONS.sun, label: 'Ít mây' };
+    if (code === 3) return { icon: ICONS.cloud, label: 'Nhiều mây' };
+    if ([45,48].includes(code)) return { icon: ICONS.cloud, label: 'Sương mù' };
+    if ([51,53,55,56,57].includes(code)) return { icon: ICONS.rain, label: 'Mưa phùn' };
+    if ([61,63,65,66,67,80,81,82].includes(code)) return { icon: ICONS.rain, label: 'Mưa' };
+    if ([71,73,75,77,85,86].includes(code)) return { icon: ICONS.cloud, label: 'Có tuyết' };
+    if ([95,96,99].includes(code)) return { icon: ICONS.rain, label: 'Dông' };
+    return { icon: ICONS.cloud, label: 'Nhiều mây' };
+  },
+
+  renderLoading(){
+    $('#weather').innerHTML = `
+      <div class="weather-pin">${ICONS.pin}</div>
+      <div>
+        <div class="weather-loc">Đang xác định vị trí...</div>
+        <div class="weather-sub">Đang tải thời tiết</div>
+      </div>
+    `;
+  },
+
+  renderData(locationName, tempC, code){
+    const w = this.codeMap(code);
+    $('#weather').innerHTML = `
+      <div class="weather-pin">${ICONS.pin}</div>
+      <div>
+        <div class="weather-loc">${locationName}</div>
+        <div class="weather-sub">${w.label}</div>
+      </div>
+      <div class="weather-temp">${w.icon}${Math.round(tempC)}°C</div>
+    `;
+  },
+
+  renderError(){
+    $('#weather').innerHTML = `
+      <div class="weather-pin">${ICONS.pin}</div>
+      <div>
+        <div class="weather-loc">Không lấy được thời tiết</div>
+        <div class="weather-sub">Vui lòng thử lại sau</div>
+      </div>
+    `;
+  },
+
+  async fetchWeather(lat, lon){
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('weather fetch failed');
+    const data = await res.json();
+    return { tempC: data.current.temperature_2m, code: data.current.weather_code };
+  },
+
+  async reverseGeocode(lat, lon){
+    try{
+      const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=vi`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('geocode failed');
+      const data = await res.json();
+      const city = data.city || data.locality || data.principalSubdivision;
+      const country = data.countryName;
+      return [city, country].filter(Boolean).join(', ');
+    }catch(e){
+      return null;
+    }
+  },
+
+  lastLat: null,
+  lastLon: null,
+  lastName: null,
+
+  async loadFor(lat, lon, knownName){
+    this.lastLat = lat;
+    this.lastLon = lon;
+    try{
+      const [weatherData, name] = await Promise.all([
+        this.fetchWeather(lat, lon),
+        knownName ? Promise.resolve(knownName) : this.reverseGeocode(lat, lon)
+      ]);
+      this.lastName = name || 'Vị trí của bạn';
+      this.renderData(this.lastName, weatherData.tempC, weatherData.code);
+    }catch(e){
+      this.renderError();
+    }
+  },
+
+  // Gọi lại API để cập nhật tình trạng (nắng/mưa/mây...) mà không phải xin
+  // vị trí hay tra tên khu vực lại từ đầu.
+  async refresh(){
+    if (this.lastLat == null || this.lastLon == null) return;
+    try{
+      const weatherData = await this.fetchWeather(this.lastLat, this.lastLon);
+      this.renderData(this.lastName, weatherData.tempC, weatherData.code);
+    }catch(e){
+      // giữ nguyên dữ liệu cũ trên UI nếu lần cập nhật này lỗi, thử lại ở chu kỳ sau
+    }
+  },
+
+  init(){
+    this.renderLoading();
+    const { fallback } = BIO_CONFIG.weather;
+    // Luôn dùng toạ độ cố định trong config — không xin quyền vị trí trình duyệt.
+    this.loadFor(fallback.lat, fallback.lon, fallback.location);
+
+    // Tự động cập nhật tình trạng thời tiết mỗi 10 phút (không load lại trang)
+    setInterval(() => this.refresh(), 10 * 60 * 1000);
+  }
+};
+
+/* ------------------------------- DISCORD (LANYARD) -------------------------------- */
+/* Lấy avatar + trạng thái online/idle/dnd/offline thật từ Discord qua Lanyard API.
+   Docs: https://github.com/Phineas/lanyard — miễn phí, không cần key,
+   chỉ cần userId đã tham gia server Lanyard.                                        */
+const Discord = {
+  colors: {
+    online:  { rgb: '35,165,90',   label: 'Online' },
+    idle:    { rgb: '240,178,50',  label: 'Idle' },
+    dnd:     { rgb: '242,63,67',   label: 'Do Not Disturb' },
+    offline: { rgb: '128,132,142', label: 'Offline' }
+  },
+
+  // Nhãn tiếng Việt + icon riêng cho từng loại activity Discord trả về.
+  // type: 0 Playing, 1 Streaming, 2 Listening, 3 Watching, 5 Competing.
+  activityMeta: {
+    0: { verb: 'Đang chơi',    icon: null }, // gán ICONS.game lúc init()
+    1: { verb: 'Đang stream',  icon: null }, // ICONS.stream
+    2: { verb: 'Đang nghe',    icon: null }, // ICONS.music_activity
+    3: { verb: 'Đang xem',     icon: null }, // ICONS.eye
+    5: { verb: 'Đang thi đấu', icon: null }, // ICONS.game
+  },
+
+  // Trạng thái mở/đóng của panel chi tiết + hoạt động đang được hiển thị,
+  // lưu lại để giữ nguyên khi Lanyard cập nhật lại (poll mỗi vài giây).
+  detailOpen: false,
+  currentActivity: null,
+
+  avatarUrl(user){
+    if (!user) return null;
+    if (!user.avatar){
+      // avatar mặc định của Discord nếu người dùng chưa đặt avatar riêng
+      const fallbackIndex = (Number(user.discriminator) || 0) % 5;
+      return `https://cdn.discordapp.com/embed/avatars/${fallbackIndex}.png`;
+    }
+    const ext = user.avatar.startsWith('a_') ? 'gif' : 'png'; // avatar động dùng gif
+    return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${ext}?size=128`;
+  },
+
+  // Viền trang trí (avatar decoration / Nitro frame) người dùng đang trang bị trên Discord.
+  // Lanyard trả về null nếu tài khoản không gắn viền nào.
+  decorationUrl(discordUser){
+    const deco = discordUser && discordUser.avatar_decoration_data;
+    if (!deco || !deco.asset) return null;
+    return `https://cdn.discordapp.com/avatar-decoration-presets/${deco.asset}.png?size=160`;
+  },
+
+  // Ảnh nhỏ của game / app đang chạy (nếu Discord có gửi asset kèm activity),
+  // dùng làm icon cho badge/panel chi tiết thay vì icon SVG chung.
+  activityImageUrl(activity){
+    const assets = activity && activity.assets;
+    if (!assets || !assets.large_image) return null;
+    const img = assets.large_image;
+    if (img.startsWith('mp:')){
+      return `https://media.discordapp.net/${img.replace('mp:', '')}`;
+    }
+    if (activity.application_id){
+      return `https://cdn.discordapp.com/app-assets/${activity.application_id}/${img}.png`;
+    }
+    return null;
+  },
+
+  // "5 phút", "2 giờ 10 phút", "3 ngày"... tính từ mốc timestamps.start Discord gửi
+  timeSince(startMs){
+    const diff = Math.max(0, Date.now() - startMs);
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'vài giây';
+    if (mins < 60) return `${mins} phút`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} giờ ${mins % 60} phút`;
+    return `${Math.floor(hrs / 24)} ngày`;
+  },
+
+  applyAvatar(discordUser){
+    const url = this.avatarUrl(discordUser);
+    const avatarEl = document.querySelector('.avatar');
+    if (avatarEl && url){
+      avatarEl.style.backgroundImage = `url('${url}')`;
+      avatarEl.textContent = '';
+    }
+  },
+
+  applyDecoration(discordUser){
+    const decoEl = document.querySelector('#avatarDeco');
+    if (!decoEl) return;
+    const url = this.decorationUrl(discordUser);
+    if (url){
+      decoEl.style.backgroundImage = `url('${url}')`;
+      decoEl.classList.add('show');
+    } else {
+      decoEl.style.backgroundImage = '';
+      decoEl.classList.remove('show');
+    }
+  },
+
+  // Tên hiển thị (h1) lấy từ global_name (display name) của Discord, @handle lấy từ username.
+  applyIdentity(discordUser){
+    if (!discordUser) return;
+    const nameEl = document.querySelector('.id-text h1');
+    const handleEl = document.querySelector('.id-text .handle');
+    if (nameEl) nameEl.textContent = discordUser.global_name || discordUser.username;
+    if (handleEl) handleEl.textContent = '@' + discordUser.username;
+  },
+
+  // Hiện badge "Đang chơi <game>" / "Đang nghe <nhạc>" / custom status ngay
+  // dưới @handle. Nếu là hoạt động thật (chơi game, nghe Spotify, xem...) thì
+  // badge có thể bấm vào để mở rộng ra panel chi tiết bên dưới nó.
+  applyActivity(activities){
+    const badgeEl = document.querySelector('#discordActivity');
+    if (!badgeEl) return;
+
+    const list = activities || [];
+    const custom = list.find(a => a.type === 4);
+    // ưu tiên "đang chơi game" (type 0) nếu có nhiều hoạt động cùng lúc
+    const real = list.find(a => a.type === 0) || list.find(a => a.type !== 4);
+
+    this.currentActivity = real || null;
+
+    let badgeHtml = '';
+    if (real){
+      const meta = this.activityMeta[real.type] || { verb: '', icon: ICONS.game };
+      const imgUrl = this.activityImageUrl(real);
+      const iconHtml = imgUrl ? `<img src="${imgUrl}" alt="">` : (meta.icon || ICONS.game);
+      const detailParts = [real.details, real.state].filter(Boolean).join(' • ');
+      badgeHtml = `${iconHtml}<span><b>${meta.verb} ${real.name}</b>${detailParts ? ' — ' + detailParts : ''}</span>${ICONS.chevron}`;
+    } else if (custom && (custom.state || custom.emoji)){
+      const emoji = custom.emoji && custom.emoji.name ? custom.emoji.name + ' ' : '';
+      badgeHtml = `<span>${emoji}${custom.state || ''}</span>`;
+    }
+
+    if (badgeHtml){
+      badgeEl.innerHTML = badgeHtml;
+      badgeEl.style.display = 'flex';
+      badgeEl.classList.toggle('clickable', !!real);
+    } else {
+      badgeEl.innerHTML = '';
+      badgeEl.style.display = 'none';
+    }
+
+    if (!real){
+      this.setDetailOpen(false);
+    } else if (this.detailOpen){
+      this.renderDetail();
+    }
+
+    this.bindActivityClick();
+  },
+
+  // Panel mở rộng: ảnh lớn hơn + tên đầy đủ + details/state đầy đủ +
+  // "đã chơi/nghe được bao lâu" tính từ timestamps.start.
+  renderDetail(){
+    const detailEl = document.querySelector('#activityDetail');
+    if (!detailEl) return;
+    const a = this.currentActivity;
+    if (!a){ detailEl.innerHTML = ''; return; }
+
+    const meta = this.activityMeta[a.type] || { verb: '' };
+    const imgUrl = this.activityImageUrl(a);
+    const timeText = (a.timestamps && a.timestamps.start) ? this.timeSince(a.timestamps.start) : '';
+
+    detailEl.innerHTML = `
+      <div class="activity-detail-inner">
+        ${imgUrl ? `<img src="${imgUrl}" alt="">` : ''}
+        <div class="activity-detail-text">
+          <div class="activity-detail-name">${a.name}</div>
+          ${a.details ? `<div class="activity-detail-line">${a.details}</div>` : ''}
+          ${a.state ? `<div class="activity-detail-line">${a.state}</div>` : ''}
+          ${timeText ? `<div class="activity-detail-time">${meta.verb} được ${timeText}</div>` : ''}
+        </div>
+      </div>
+    `;
+  },
+
+  setDetailOpen(open){
+    this.detailOpen = open;
+    const badgeEl = document.querySelector('#discordActivity');
+    const detailEl = document.querySelector('#activityDetail');
+    if (badgeEl) badgeEl.classList.toggle('open', open);
+    if (detailEl) detailEl.classList.toggle('open', open);
+    if (open) this.renderDetail();
+  },
+
+  // Gắn sự kiện click 1 lần duy nhất (badge được cập nhật innerHTML liên tục
+  // qua các lần poll, nhưng bản thân phần tử #discordActivity không đổi).
+  bindActivityClick(){
+    const badgeEl = document.querySelector('#discordActivity');
+    if (!badgeEl || badgeEl.dataset.bound) return;
+    badgeEl.dataset.bound = '1';
+    badgeEl.addEventListener('click', () => {
+      if (!this.currentActivity) return;
+      this.setDetailOpen(!this.detailOpen);
+    });
+  },
+
+  applyStatus(status){
+    const info = this.colors[status] || this.colors.offline;
+
+    const dot = document.querySelector('#status .dot');
+    const labelEl = document.querySelector('#status span:last-child');
+    const avatarEl = document.querySelector('.avatar');
+
+    if (dot) dot.style.setProperty('--status-rgb', info.rgb);
+    if (labelEl) labelEl.textContent = info.label;
+    // Quầng sáng kiểu đám mây quanh avatar đổi màu theo trạng thái (xem @keyframes cloudGlow)
+    if (avatarEl) avatarEl.style.setProperty('--status-rgb', info.rgb);
+  },
+
+  async fetchPresence(){
+    const { userId, useAvatar, useAvatarDecoration, useIdentity, useActivity, useStatus } = BIO_CONFIG.discord;
+    if (!userId) return;
+    try{
+      const res = await fetch(`https://api.lanyard.rest/v1/users/${userId}`);
+      const json = await res.json();
+      if (!json.success) throw new Error('Lanyard trả về lỗi — kiểm tra userId hoặc đã join server Lanyard chưa');
+      const d = json.data;
+      if (useAvatar) this.applyAvatar(d.discord_user);
+      if (useAvatarDecoration) this.applyDecoration(d.discord_user);
+      if (useIdentity) this.applyIdentity(d.discord_user);
+      if (useActivity) this.applyActivity(d.activities);
+      if (useStatus) this.applyStatus(d.discord_status);
+    }catch(e){
+      console.warn('[Discord] Không lấy được trạng thái:', e.message);
+    }
+  },
+
+  init(){
+    // gán icon SVG vào activityMeta ở đây (ICONS đã có sẵn khi init() chạy)
+    this.activityMeta[0].icon = ICONS.game;
+    this.activityMeta[1].icon = ICONS.stream;
+    this.activityMeta[2].icon = ICONS.music_activity;
+    this.activityMeta[3].icon = ICONS.eye;
+    this.activityMeta[5].icon = ICONS.game;
+
+    const cfg = BIO_CONFIG.discord;
+    if (!cfg.enabled || !cfg.userId) return; // chưa bật hoặc chưa điền userId thì bỏ qua, giữ avatar/tên tĩnh
+    this.fetchPresence();
+    setInterval(() => this.fetchPresence(), cfg.pollIntervalMs || 20000);
+  }
+};
+
+
+/* ------------------------------- BACKGROUND -------------------------------- */
+const Background = (() => {
+  const root = document.getElementById('bg');
+  const video = document.getElementById('bgVideo');
+  const lightCanvas = document.getElementById('bgLight');
+  const fog = document.getElementById('bgFog');
+  const overlay = document.getElementById('bgOverlay');
+
+  let gl = null;
+  let program = null;
+  let texture = null;
+  let raf = 0;
+  let ready = false;
+  let renderRunning = false;
+  let lastRenderMs = 0;
+  let frameHandle = 0;
+  const TARGET_FPS = 24;
+  const FRAME_INTERVAL = 1000 / TARGET_FPS;
+  let uniforms = null;
+
+  const vertexSource = `
+    attribute vec2 a_position;
+    varying vec2 v_uv;
+    void main(){
+      v_uv = vec2((a_position.x + 1.0) * 0.5, 1.0 - (a_position.y + 1.0) * 0.5);
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+
+  const fragmentSource = `
+    precision mediump float;
+    uniform sampler2D u_video;
+    uniform float u_threshold;
+    uniform float u_softness;
+    uniform float u_strength;
+    uniform float u_coreThreshold;
+    uniform float u_coreStrength;
+    uniform float u_chroma;
+    uniform float u_videoAspect;
+    uniform float u_viewAspect;
+    uniform vec2  u_texel;
+    varying vec2 v_uv;
+
+    vec4 sampleBright(vec2 uv){
+      vec4 c = texture2D(u_video, clamp(uv, 0.0, 1.0));
+      float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      float soft = max(u_softness, 0.001);
+      float mask = smoothstep(u_threshold, min(1.0, u_threshold + soft), lum);
+      return vec4(c.rgb * mask, mask);
+    }
+
+    void main(){
+      vec2 uv = v_uv;
+      float va = max(u_videoAspect, 0.0001);
+      float ba = max(u_viewAspect, 0.0001);
+
+      if (va > ba) {
+        float visible = ba / va;
+        float crop = (1.0 - visible) * 0.5;
+        uv.x = crop + uv.x * visible;
+      } else {
+        float visible = va / ba;
+        float crop = (1.0 - visible) * 0.5;
+        uv.y = crop + uv.y * visible;
+      }
+
+      vec2 t = u_texel * 2.0;
+      vec4 s0 = sampleBright(uv);
+      vec4 sx = sampleBright(uv + vec2(t.x, 0.0));
+      vec4 sy = sampleBright(uv + vec2(0.0, t.y));
+      vec4 sd = sampleBright(uv + vec2(t.x, t.y));
+
+      vec3 rgb = s0.rgb * 0.42 + (sx.rgb + sy.rgb) * 0.18 + sd.rgb * 0.10;
+      float mask = s0.a * 0.42 + (sx.a + sy.a) * 0.18 + sd.a * 0.10;
+
+      vec4 hot = texture2D(u_video, clamp(uv, 0.0, 1.0));
+      float hotLum = dot(hot.rgb, vec3(0.2126, 0.7152, 0.0722));
+      float hotMask = smoothstep(
+        u_coreThreshold,
+        min(1.0, u_coreThreshold + 0.10),
+        hotLum
+      ) * u_coreStrength;
+
+      float lum = max(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), 0.0001);
+      vec3 chroma = rgb / lum;
+      chroma = mix(vec3(1.0), chroma, u_chroma);
+
+      vec3 broad = rgb * chroma * u_strength;
+      vec3 core = hot.rgb * hotMask * (0.55 + 0.45 * u_chroma);
+      vec3 light = broad + core;
+      float alpha = clamp(mask * u_strength + hotMask * 0.50, 0.0, 1.0);
+
+      gl_FragColor = vec4(light, alpha);
+    }
+  `
+
+  function clamp01(v){
+    return Math.max(0, Math.min(1, Number(v) || 0));
+  }
+
+  function createShader(type, source){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, source);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      console.warn('Background light shader:', gl.getShaderInfoLog(sh));
+      gl.deleteShader(sh);
+      return null;
+    }
+    return sh;
+  }
+
+  function initGL(){
+    if (!lightCanvas || !video) return false;
+    gl = lightCanvas.getContext('webgl', {
+      alpha: true,
+      premultipliedAlpha: false,
+      antialias: false,
+      preserveDrawingBuffer: false
+    });
+    if (!gl) return false;
+
+    const vs = createShader(gl.VERTEX_SHADER, vertexSource);
+    const fs = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vs || !fs) return false;
+
+    program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn('Background light program:', gl.getProgramInfoLog(program));
+      return false;
+    }
+
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),
+      gl.STATIC_DRAW
+    );
+
+    texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.useProgram(program);
+    uniforms = {
+      video: gl.getUniformLocation(program, 'u_video'),
+      threshold: gl.getUniformLocation(program, 'u_threshold'),
+      softness: gl.getUniformLocation(program, 'u_softness'),
+      strength: gl.getUniformLocation(program, 'u_strength'),
+      coreThreshold: gl.getUniformLocation(program, 'u_coreThreshold'),
+      coreStrength: gl.getUniformLocation(program, 'u_coreStrength'),
+      chroma: gl.getUniformLocation(program, 'u_chroma'),
+      videoAspect: gl.getUniformLocation(program, 'u_videoAspect'),
+      viewAspect: gl.getUniformLocation(program, 'u_viewAspect'),
+      texel: gl.getUniformLocation(program, 'u_texel')
+    };
+    const pos = gl.getAttribLocation(program, 'a_position');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+    ready = true;
+    return true;
+  }
+
+  function resizeCanvas(){
+    if (!lightCanvas) return;
+    const rect = lightCanvas.getBoundingClientRect();
+    const rawDpr = window.devicePixelRatio || 1;
+    const mobile = Math.min(window.innerWidth, window.innerHeight) <= 700;
+    const dprCap = mobile ? 1.0 : 1.2;
+    let dpr = Math.min(rawDpr, dprCap);
+
+    // Keep the shader lightweight on unusually large screens/high-DPR devices.
+    const maxPixels = mobile ? 520000 : 980000;
+    const estimated = Math.max(1, rect.width * rect.height * dpr * dpr);
+    if (estimated > maxPixels) dpr *= Math.sqrt(maxPixels / estimated);
+
+    const w = Math.max(2, Math.floor(rect.width * dpr));
+    const h = Math.max(2, Math.floor(rect.height * dpr));
+    if (lightCanvas.width !== w || lightCanvas.height !== h) {
+      lightCanvas.width = w;
+      lightCanvas.height = h;
+      if (gl) gl.viewport(0, 0, w, h);
+    }
+    return { width: rect.width, height: rect.height };
+  }
+
+  function scheduleNext(){
+    if (!renderRunning) return;
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      frameHandle = video.requestVideoFrameCallback(() => renderLight());
+    } else {
+      raf = requestAnimationFrame(renderLight);
+    }
+  }
+
+  function renderLight(now = performance.now()){
+    if (!renderRunning) return;
+    if (!ready || !gl || !texture || !video || video.readyState < 2 || video.videoWidth < 2) {
+      scheduleNext();
+      return;
+    }
+
+    if (now - lastRenderMs < FRAME_INTERVAL) {
+      scheduleNext();
+      return;
+    }
+    lastRenderMs = now;
+
+    const cfg = BIO_CONFIG.background?.lightMask || {};
+    const view = resizeCanvas() || { width: lightCanvas.clientWidth, height: lightCanvas.clientHeight };
+    gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+
+    gl.uniform1i(uniforms.video, 0);
+    gl.uniform1f(uniforms.videoAspect, video.videoWidth / Math.max(1, video.videoHeight));
+    gl.uniform1f(uniforms.viewAspect, Math.max(1, view.width) / Math.max(1, view.height));
+    gl.uniform1f(uniforms.threshold, clamp01(cfg.threshold ?? 0.48));
+    gl.uniform1f(uniforms.softness, clamp01(cfg.softness ?? 0.20));
+    gl.uniform1f(uniforms.strength, Math.max(0, Number(cfg.strength ?? 1)));
+    gl.uniform1f(uniforms.coreThreshold, clamp01(cfg.coreThreshold ?? 0.70));
+    gl.uniform1f(uniforms.coreStrength, Math.max(0, Number(cfg.coreStrength ?? 0.72)));
+    gl.uniform1f(uniforms.chroma, Math.max(0, Number(cfg.chroma ?? 1.20)));
+    gl.uniform2f(
+      uniforms.texel,
+      1 / Math.max(1, video.videoWidth),
+      1 / Math.max(1, video.videoHeight)
+    );
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    scheduleNext();
+  }
+
+  function stopLight(){
+    renderRunning = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    if (frameHandle && typeof video.cancelVideoFrameCallback === 'function') {
+      try { video.cancelVideoFrameCallback(frameHandle); } catch (_) {}
+    }
+    frameHandle = 0;
+    lastRenderMs = 0;
+    if (gl) gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
+  function apply(){
+    if (!root) return;
+    const cfg = BIO_CONFIG.background || {};
+    const type = cfg.type || 'gradient';
+
+    stopLight();
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.style.display = 'none';
+    lightCanvas.style.display = 'none';
+    fog.style.display = 'none';
+    overlay.style.display = 'none';
+
+    if (cfg.enabled === false) return;
+
+    if (type === 'video' && cfg.source) {
+      video.src = cfg.source;
+      video.muted = true;
+      video.autoplay = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.style.objectPosition = cfg.position || 'center center';
+      video.style.objectFit = cfg.size || 'cover';
+      video.style.display = 'block';
+      video.setAttribute('muted', '');
+      video.setAttribute('autoplay', '');
+      video.setAttribute('loop', '');
+      video.setAttribute('playsinline', '');
+      video.addEventListener('loadeddata', () => {
+        video.play().catch(() => {});
+        const lm = cfg.lightMask || {};
+        if (lm.enabled !== false && initGL()) {
+          const blur = Math.max(0, Number(lm.blur ?? 14));
+          lightCanvas.style.filter = `blur(${blur}px) saturate(1.05)`;
+          lightCanvas.style.opacity = String(clamp01(lm.opacity ?? 0.84));
+          lightCanvas.style.display = 'block';
+          renderRunning = true;
+          resizeCanvas();
+          renderLight();
+        }
+      }, { once:true });
+    } else if (type === 'image' && cfg.source) {
+      root.style.backgroundImage = `url("${String(cfg.source).replace(/"/g, '\\"')}")`;
+      root.style.backgroundPosition = cfg.position || 'center center';
+      root.style.backgroundSize = cfg.size || 'cover';
+      root.style.backgroundRepeat = 'no-repeat';
+    }
+
+    const ov = cfg.overlay || {};
+    if (ov.enabled !== false && ov.color) {
+      overlay.style.background = ov.color;
+      overlay.style.display = 'block';
+    }
+
+    const fg = cfg.fog || {};
+    if (fg.enabled) {
+      const fogBlur = Math.min(3, Math.max(0, Number(fg.blur || 0)));
+      fog.style.background = fg.color || 'rgba(220,230,235,0.10)';
+      fog.style.backdropFilter = fogBlur ? `blur(${fogBlur}px)` : 'none';
+      fog.style.webkitBackdropFilter = fogBlur ? `blur(${fogBlur}px)` : 'none';
+      fog.style.opacity = String(clamp01(fg.opacity ?? 0.08));
+      fog.style.display = 'block';
+    }
+  }
+
+  const resizeObserver = new ResizeObserver(() => resizeCanvas());
+  if (root && 'ResizeObserver' in window) resizeObserver.observe(root);
+
+  window.addEventListener('resize', resizeCanvas, { passive: true });
+  window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 120), { passive: true });
+  return { apply };
+})();
+
+/* --------------------------------- INIT ------------------------------------ */
+Background.apply();
+renderNav();
+renderProfile();
+renderSocials();
+renderFooter();
+Player.mount();
+Weather.init();
+Discord.init();
+// initSpotlight();
+
+// Kích hoạt hiệu ứng mở trang tuần tự đúng một lần (xem class .reveal / .ready)
+requestAnimationFrame(() => document.body.classList.add('ready'));
 </script>
+
 </body>
 </html>
